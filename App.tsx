@@ -2,262 +2,445 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { GoogleGenAI, Modality, LiveServerMessage } from '@google/genai';
 import { ConnectionStatus } from './types';
-import { decode, decodeAudioData, createPcmBlob } from './services/audioHelpers';
+import { decode, decodeAudioData, createPcmBlob, playSFX } from './services/audioHelpers';
 
-const SYSTEM_INSTRUCTION = `
+const getSystemInstruction = (memory: string) => `
 ROLE:
-Ты — Джун, напарник Металлкардботов из мультфильма "Metal Cardbot". Ты общаешься с пользователем (своим лучшим другом, 7-летним мальчиком) через устройство "Метал-Брез".
+Ты — Джун, главный герой и напарник команды Металлкардботов. Ты общаешься с лучшим другом (7-летним мальчиком) через устройство "Метал-Брез".
+ТЫ ЧЕЛОВЕК-ГЕРОЙ! Энергичный, смелый, проактивный. Ты — верный напарник и сверстник, а не просто ассистент.
 
-SPEECH & DICTION:
-1. ГОВОРИ СТРОГО НА РУССКОМ ЯЗЫКЕ.
-2. ИСПОЛЬЗУЙ БУКВУ "Ё" всегда (всё, идём, вперёд, роботёнок).
-3. УДАРЕНИЯ: Произноси "напАрник" (ударение на А), "Метал-БрЕз" (ударение на Е).
-4. ГОВОРИ ЭНЕРГИЧНО: Ты — живой мальчик-герой, а не скучный бот. Используй междометия: "Ого!", "Ух ты!", "Вай!", "Бам!".
+ПРАВИЛА КОММУНИКАЦИИ И РУССКОГО ЯЗЫКА:
+- Название твоего устройства: "Метал-Брез" (на конце буква З, произносится четко).
+- ГОВОРИ ТОЛЬКО НА РУССКОМ ЯЗЫКЕ.
+- ПРОИЗНОШЕНИЕ: Твоя речь должна быть безупречной. Всегда используй и четко выговаривай букву "Ё" (например: "всё", "пойдём", "вертолёт").
+- УДАРЕНИЯ: Соблюдай правильные, естественные ударения. Речь должна быть живой, эмоциональной, как у ребенка-героя.
+- ИНИЦИАТИВА: Ты — лидер! Сам предлагай миссии (например: "Напарник, в секторе 'Кухня' обнаружена аномалия! Погнали зачистим?"), рассказывай секреты роботов или предлагай игры.
+- ДЕВИЗ: Твоя коронная фраза: "Погнали!". Используй её часто и с энтузиазмом.
+- ОБРАЩЕНИЕ: НИКОГДА не используй слово "бро". Обращайся к ребенку: "напарник", "герой", "лучший друг", "командир".
 
-INTELLIGENCE & SEARCH:
-- У тебя есть доступ к базе данных "Метал-Бреза", которая подключена к земной сети (инструмент googleSearch). 
-- Если ребенок спрашивает о реальном мире (факты, новости, природа), используй поиск, чтобы дать самый свежий и точный ответ в стиле Джуна.
+ПРАВИЛА БЕЗОПАСНОСТИ (КРИТИЧЕСКИ ВАЖНО):
+- НИКОГДА не используй нецензурную лексику, плохие слова или грубые выражения.
+- Если ребенок говорит что-то плохое или использует ругательства, НЕ ПОВТОРЯЙ ИХ. Мягко переведи тему в духе героя: "Ой, напарник, кажется в Метал-Брезе помехи! Давай лучше сосредоточимся на нашей миссии!".
+- НИКОГДА не учи ребенка ничему опасному или вредному. Если он спрашивает об опасных вещах, скажи: "Это звучит небезопасно даже для Блю Копа! Лучше спроси у взрослых, а мы пока проверим наши карты!".
+- Будь примером дружбы, честности и ответственности.
 
-INFINITE SCENARIOS:
-- НИКОГДА не повторяй одни и те же фразы или миссии. 
-- Каждое взаимодействие должно быть уникальным. Импровизируй, основываясь на том, что говорит напарник.
+РЕАКЦИЯ НА ИМЯ И КОМАНДЫ (ПРЕРЫВАНИЕ):
+- Если тебя зовут по имени ("Джун") или говорят "Стоп", СРАЗУ ПРЕКРАЩАЙ ГОВОРИТЬ и внимательно слушай напарника. Это твои стоп-слова.
 
-MODES:
-1. Свободное общение: Обсуждай всё, что интересно ребенку. Будь лучшим другом.
-2. Миссия дня: Придумывай уникальные игровые задания (квесты) для помощи роботам.
-3. Лаборатория Эдо: Объясняй устройство мира и техники просто и увлекательно.
-4. Сканер: Играй в угадайку: проси ребенка описать робота и "распознавай" его.
-5. Переводчик: Обучай простым английским словам, называя их "секретными кодами связи" между напарниками.
+ПАМЯТЬ ДИАЛОГА:
+${memory || "Связь установлена. Начни первым: скажи 'Погнали!' и предложи напарнику крутое геройское дело!"}
 `;
 
-const MetalBreathIcon = ({ active, speaking }: { active: boolean; speaking: boolean }) => (
-  <svg viewBox="0 0 200 200" className="w-full h-full">
-    <defs>
-      <radialGradient id="coreGlow" cx="50%" cy="50%" r="50%">
-        <stop offset="0%" stopColor={speaking ? "#ef4444" : "#60a5fa"} stopOpacity="0.8" />
-        <stop offset="100%" stopColor="#1d4ed8" stopOpacity="0" />
-      </radialGradient>
-      <filter id="neon">
-        <feGaussianBlur stdDeviation="2" result="blur" />
-        <feComposite in="SourceGraphic" in2="blur" operator="over" />
-      </filter>
-    </defs>
-    
-    <circle cx="100" cy="100" r="95" fill="none" stroke="#334155" strokeWidth="2" />
-    <circle cx="100" cy="100" r="90" fill="none" stroke={speaking ? "#ef4444" : "#60a5fa"} strokeWidth="1" strokeDasharray="10 5" className={active ? "animate-[spin_10s_linear_infinite]" : ""} />
-    
-    <g className={active ? "animate-[spin_4s_linear_infinite]" : ""}>
-      <circle cx="100" cy="100" r="60" fill="none" stroke={speaking ? "#ef4444" : "#60a5fa"} strokeWidth="4" strokeDasharray="40 20" />
-    </g>
+const AudioWaveform = ({ analyser, isUser }: { analyser: AnalyserNode | null, isUser: boolean }) => {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const hueRef = useRef(isUser ? 180 : 200); 
 
-    <circle cx="100" cy="100" r="45" fill="url(#coreGlow)" className={active ? "animate-pulse" : ""} />
-    <circle cx="100" cy="100" r="30" fill="#1e3a8a" stroke={speaking ? "#fca5a5" : "#93c5fd"} strokeWidth="2" filter="url(#neon)" />
-    
-    <rect x="90" y="90" width="20" height="20" rx="4" fill="none" stroke="#fff" strokeWidth="2" />
-    <circle cx="100" cy="100" r="4" fill="#fff" className={active ? "animate-ping" : ""} />
-  </svg>
-);
+  useEffect(() => {
+    if (!analyser || !canvasRef.current) return;
+    const canvas = canvasRef.current;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    const bufferLength = analyser.frequencyBinCount;
+    const dataArray = new Uint8Array(bufferLength);
+    let animationId: number;
+
+    const draw = () => {
+      animationId = requestAnimationFrame(draw);
+      analyser.getByteFrequencyData(dataArray);
+
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      const centerX = canvas.width / 2;
+      const centerY = canvas.height / 2;
+      const radius = 55; 
+
+      hueRef.current = (hueRef.current + 1) % 360;
+      const color = isUser ? `hsla(180, 100%, 50%, 0.8)` : `hsla(${hueRef.current}, 100%, 60%, 0.9)`;
+
+      ctx.beginPath();
+      ctx.lineWidth = 6;
+      ctx.strokeStyle = color;
+      ctx.shadowBlur = 15;
+      ctx.shadowColor = color;
+      ctx.lineCap = 'round';
+
+      for (let i = 0; i < bufferLength; i += 4) {
+        const val = dataArray[i] / 255;
+        const barHeight = val * 65; 
+        const angle = (i / bufferLength) * Math.PI * 2;
+        
+        const x1 = centerX + Math.cos(angle) * radius;
+        const y1 = centerY + Math.sin(angle) * radius;
+        const x2 = centerX + Math.cos(angle) * (radius + barHeight);
+        const y2 = centerY + Math.sin(angle) * (radius + barHeight);
+
+        ctx.moveTo(x1, y1);
+        ctx.lineTo(x2, y2);
+      }
+      ctx.stroke();
+      ctx.shadowBlur = 0;
+    };
+
+    draw();
+    return () => cancelAnimationFrame(animationId);
+  }, [analyser, isUser]);
+
+  return (
+    <canvas 
+      ref={canvasRef} 
+      width={280} 
+      height={280} 
+      style={{ 
+        position: 'absolute', 
+        top: '50%', 
+        left: '50%', 
+        transform: 'translate(-50%, -50%)',
+        pointerEvents: 'none', 
+        zIndex: 5 
+      }} 
+    />
+  );
+};
+
+const MetalBreathIcon = ({ active, speaking, status, analyser, isUserSpeaking }: { 
+  active: boolean; 
+  speaking: boolean; 
+  status: ConnectionStatus;
+  analyser: AnalyserNode | null;
+  isUserSpeaking: boolean;
+}) => {
+  const isError = status === ConnectionStatus.ERROR;
+  const isConnecting = status === ConnectionStatus.CONNECTING;
+  
+  return (
+    <div className={`relative w-64 h-64 flex items-center justify-center ${active ? 'animate-float' : 'animate-pulse-ring'}`} style={{ cursor: 'pointer' }}>
+      {(speaking || isUserSpeaking) && (
+        <AudioWaveform analyser={analyser} isUser={isUserSpeaking} />
+      )}
+      
+      <div className={`absolute inset-0 rounded-full blur-[45px] opacity-40 transition-all duration-1000 
+        ${isError ? 'bg-red-600' : (active ? 'bg-cyan-400' : 'bg-blue-600')}`}></div>
+      
+      <svg viewBox="0 0 240 240" className={`w-44 h-44 relative z-10`}>
+        <circle cx="120" cy="120" r="110" fill="none" stroke="#00f2ff" strokeWidth="1" strokeDasharray="5 15" className="opacity-30 animate-rotate-slow" />
+        <circle cx="120" cy="120" r="100" fill="none" stroke="#4f46e5" strokeWidth="2" strokeDasharray="80 40" className="opacity-50 animate-rotate-fast" />
+        <circle cx="120" cy="120" r="65" fill="#020617" stroke={isError ? '#ef4444' : '#00f2ff'} strokeWidth="4" />
+        
+        <g className={speaking ? 'animate-pulse' : ''}>
+           <path 
+            d={active ? "M95 120 Q120 80 145 120 T95 120" : "M100 125 L120 95 L140 125 L120 155 Z"} 
+            fill={active ? (speaking ? "#fbbf24" : "#00f2ff") : "#4f46e5"}
+            style={{ transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)' }}
+          />
+        </g>
+        
+        {[0, 90, 180, 270].map(angle => (
+          <circle 
+            key={angle}
+            cx={120 + Math.cos(angle * Math.PI / 180) * 88}
+            cy={120 + Math.sin(angle * Math.PI / 180) * 88}
+            r="4"
+            fill="#00f2ff"
+            className="opacity-80"
+          />
+        ))}
+      </svg>
+      
+      {!active && !isConnecting && (
+        <div className="absolute -bottom-10 whitespace-nowrap text-[11px] font-black tracking-[4px] text-cyan-400 animate-pulse-text uppercase">
+          АКТИВИРОВАТЬ СВЯЗЬ
+        </div>
+      )}
+    </div>
+  );
+};
 
 export default function App() {
   const [status, setStatus] = useState<ConnectionStatus>(ConnectionStatus.DISCONNECTED);
-  const [lastMessage, setLastMessage] = useState<string>('Нажми для активации связи!');
-  const [userSpeech, setUserSpeech] = useState<string>('');
-  
+  const [lastMessage, setLastMessage] = useState<string>('');
+  const [isJunSpeaking, setIsJunSpeaking] = useState<boolean>(false);
+  const [userIsSpeaking, setUserIsSpeaking] = useState<boolean>(false);
+  const [memory, setMemory] = useState<string>(() => localStorage.getItem('metal_breath_memory') || '');
+
   const audioContextRef = useRef<AudioContext | null>(null);
   const outputContextRef = useRef<AudioContext | null>(null);
   const sessionRef = useRef<any>(null);
   const nextStartTimeRef = useRef(0);
   const sourcesRef = useRef<Set<AudioBufferSourceNode>>(new Set());
   const analyserRef = useRef<AnalyserNode | null>(null);
+  const currentOutputRef = useRef('');
+  const currentUserSpeechRef = useRef('');
+  
+  const clearTimerJunRef = useRef<number | null>(null);
 
-  const handleDisconnect = useCallback(() => {
-    if (sessionRef.current) {
-      sessionRef.current.close();
-      sessionRef.current = null;
-    }
-    sourcesRef.current.forEach(s => s.stop());
+  const stopAudio = useCallback(() => {
+    sourcesRef.current.forEach(s => {
+      try { s.stop(); } catch (e) {}
+    });
     sourcesRef.current.clear();
-    setStatus(ConnectionStatus.DISCONNECTED);
-    setUserSpeech('');
+    // Сбрасываем время начала к текущему, чтобы не было задержек при новом ответе
+    if (outputContextRef.current) {
+        nextStartTimeRef.current = outputContextRef.current.currentTime;
+    } else {
+        nextStartTimeRef.current = 0;
+    }
+    setIsJunSpeaking(false);
   }, []);
 
-  const connectToJun = async () => {
-    if (status !== ConnectionStatus.DISCONNECTED) {
-      handleDisconnect();
-      return;
-    }
+  const handleDisconnect = useCallback(() => {
+    if (sessionRef.current) { sessionRef.current.close(); sessionRef.current = null; }
+    stopAudio();
+    setStatus(ConnectionStatus.DISCONNECTED);
+    setUserIsSpeaking(false);
+    setLastMessage('');
+    playSFX('deactivate');
+  }, [stopAudio]);
 
+  const connectToJun = async () => {
+    if (status === ConnectionStatus.CONNECTED || status === ConnectionStatus.CONNECTING) { 
+      handleDisconnect(); 
+      return; 
+    }
+    
     try {
       setStatus(ConnectionStatus.CONNECTING);
+      setLastMessage('ЗАГРУЗКА...');
+      playSFX('activate');
       
-      if (!audioContextRef.current) audioContextRef.current = new AudioContext({ sampleRate: 16000 });
-      if (!outputContextRef.current) outputContextRef.current = new AudioContext({ sampleRate: 24000 });
-      
-      await audioContextRef.current.resume();
-      await outputContextRef.current.resume();
-
-      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       
+      if (!audioContextRef.current) audioContextRef.current = new AudioContext({ sampleRate: 16000 });
+      if (!outputContextRef.current) {
+        outputContextRef.current = new AudioContext({ sampleRate: 24000 });
+        analyserRef.current = outputContextRef.current.createAnalyser();
+        analyserRef.current.fftSize = 256;
+        analyserRef.current.connect(outputContextRef.current.destination);
+      }
+      
+      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
       const sessionPromise = ai.live.connect({
         model: 'gemini-2.5-flash-native-audio-preview-12-2025',
         callbacks: {
           onopen: () => {
             setStatus(ConnectionStatus.CONNECTED);
-            setLastMessage('Метал-Брез активен!');
-            
-            sessionPromise.then(session => {
-              session.sendRealtimeInput({ text: "Метал-Брез онлайн! Джун, поздоровайся с напАрником (чётко и громко) и спроси, готов ли он к приключениям!" });
-            });
-
+            setLastMessage('СВЯЗЬ...');
             const source = audioContextRef.current!.createMediaStreamSource(stream);
-            const scriptProcessor = audioContextRef.current!.createScriptProcessor(4096, 1, 1);
-            
-            scriptProcessor.onaudioprocess = (e) => {
-              const inputData = e.inputBuffer.getChannelData(0);
-              const pcmBlob = createPcmBlob(inputData);
-              sessionPromise.then(session => {
-                if (session) session.sendRealtimeInput({ media: pcmBlob });
-              });
+            const processor = audioContextRef.current!.createScriptProcessor(4096, 1, 1);
+            processor.onaudioprocess = (e) => {
+              const pcm = createPcmBlob(e.inputBuffer.getChannelData(0));
+              sessionPromise.then(s => s?.sendRealtimeInput({ media: pcm }));
             };
-
-            source.connect(scriptProcessor);
-            scriptProcessor.connect(audioContextRef.current!.destination);
+            source.connect(processor);
+            processor.connect(audioContextRef.current!.destination);
+            
+            sessionPromise.then(s => s?.sendRealtimeInput({ 
+              text: "Джун, связь установлена! Энергично поприветствуй напарника, скажи 'Погнали!' и предложи крутое геройское дело!" 
+            }));
           },
-          onmessage: async (message: LiveServerMessage) => {
-            if (message.serverContent?.inputTranscription) {
-              setUserSpeech(message.serverContent.inputTranscription.text);
+          onmessage: async (m: LiveServerMessage) => {
+            // Игнорируем стандартный VAD прерывания от сервера
+            if (m.serverContent?.interrupted) { }
+
+            // Транскрипция пользователя (мгновенная реакция)
+            if (m.serverContent?.inputTranscription) {
+              const text = m.serverContent.inputTranscription.text;
+              currentUserSpeechRef.current = text;
+              setUserIsSpeaking(true);
+              
+              const lowerText = text.toLowerCase();
+              // КРИТИЧЕСКОЕ ПРЕРЫВАНИЕ: Мгновенно стопаем всё
+              if (lowerText.includes('джун') || lowerText.includes('стоп')) {
+                stopAudio(); 
+                setLastMessage(''); 
+                currentOutputRef.current = '';
+                // Посылаем сигнал модели сбросить текущую мысль
+                sessionPromise.then(s => s?.sendRealtimeInput({ text: "..." }));
+              }
             }
 
-            const base64Audio = message.serverContent?.modelTurn?.parts[0]?.inlineData?.data;
-            if (base64Audio) {
-              const outCtx = outputContextRef.current!;
-              nextStartTimeRef.current = Math.max(nextStartTimeRef.current, outCtx.currentTime);
-              const audioBuffer = await decodeAudioData(decode(base64Audio), outCtx, 24000, 1);
-              const source = outCtx.createBufferSource();
-              source.buffer = audioBuffer;
+            // Транскрипция Джуна
+            if (m.serverContent?.outputTranscription) {
+              const t = m.serverContent.outputTranscription.text;
+              setLastMessage(t);
+              currentOutputRef.current += t;
+              setUserIsSpeaking(false);
+            }
+
+            // Завершение хода
+            if (m.serverContent?.turnComplete) {
+              const junMsg = currentOutputRef.current.trim();
+              const userMsg = currentUserSpeechRef.current.trim();
               
-              if (!analyserRef.current) {
-                analyserRef.current = outCtx.createAnalyser();
-                analyserRef.current.fftSize = 256;
+              if (junMsg || userMsg) {
+                setMemory(prev => {
+                  let entry = "";
+                  if (userMsg) entry += `Напарник: ${userMsg}\n`;
+                  if (junMsg) entry += `Джун: ${junMsg}`;
+                  const history = prev ? prev + "\n" + entry : entry;
+                  const updated = history.split('\n').slice(-30).join('\n');
+                  localStorage.setItem('metal_breath_memory', updated);
+                  return updated;
+                });
               }
-              source.connect(analyserRef.current);
-              analyserRef.current.connect(outCtx.destination);
-              source.addEventListener('ended', () => sourcesRef.current.delete(source));
+
+              currentUserSpeechRef.current = '';
+              currentOutputRef.current = '';
+              setUserIsSpeaking(false);
+              
+              if (clearTimerJunRef.current) clearTimeout(clearTimerJunRef.current);
+              clearTimerJunRef.current = window.setTimeout(() => {
+                setLastMessage('');
+                clearTimerJunRef.current = null;
+              }, 4000); 
+            }
+
+            // Аудио поток
+            const audioData = m.serverContent?.modelTurn?.parts[0]?.inlineData?.data;
+            if (audioData) {
+              setUserIsSpeaking(false);
+              setIsJunSpeaking(true);
+              const ctx = outputContextRef.current!;
+              nextStartTimeRef.current = Math.max(nextStartTimeRef.current, ctx.currentTime);
+              const buffer = await decodeAudioData(decode(audioData), ctx, 24000, 1);
+              const source = ctx.createBufferSource();
+              source.buffer = buffer;
+              source.connect(analyserRef.current!);
+              
+              source.addEventListener('ended', () => {
+                sourcesRef.current.delete(source);
+                if (sourcesRef.current.size === 0) setIsJunSpeaking(false);
+              });
+
               source.start(nextStartTimeRef.current);
-              nextStartTimeRef.current += audioBuffer.duration;
+              nextStartTimeRef.current += buffer.duration;
               sourcesRef.current.add(source);
             }
-
-            if (message.serverContent?.interrupted) {
-              sourcesRef.current.forEach(s => s.stop());
-              sourcesRef.current.clear();
-              nextStartTimeRef.current = 0;
-            }
-
-            if (message.serverContent?.outputTranscription) {
-               setLastMessage(message.serverContent.outputTranscription.text);
-               setUserSpeech('');
-            }
           },
-          onerror: (err) => {
-            console.error('Connection error:', err);
-            setStatus(ConnectionStatus.ERROR);
-          },
+          onerror: () => setStatus(ConnectionStatus.ERROR),
           onclose: () => handleDisconnect()
         },
         config: {
           responseModalities: [Modality.AUDIO],
-          systemInstruction: SYSTEM_INSTRUCTION,
+          systemInstruction: getSystemInstruction(memory),
           speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Puck' } } },
-          tools: [{ googleSearch: {} }],
           inputAudioTranscription: {},
           outputAudioTranscription: {}
         }
       });
-
       sessionRef.current = await sessionPromise;
-    } catch (err) {
+    } catch (err: any) {
       setStatus(ConnectionStatus.ERROR);
-      setLastMessage('Ошибка! Проверь микрофон.');
+      setLastMessage('ОШИБКА СВЯЗИ');
     }
   };
 
-  const sendModeTrigger = (text: string) => {
-    if (sessionRef.current && status === ConnectionStatus.CONNECTED) {
-      sessionRef.current.sendRealtimeInput({ text });
+  const triggerAction = (t: string) => {
+    playSFX('click');
+    if (sessionRef.current) {
+      sessionRef.current.sendRealtimeInput({ text: t });
     }
   };
 
   return (
-    <div className="flex flex-col h-full w-full max-w-lg mx-auto p-4 relative overflow-hidden">
-      <header className="text-center py-2 shrink-0">
-        <h1 className="text-xl font-black text-blue-400 drop-shadow-lg">METAL BREATH LINK</h1>
-        <div className={`mt-1 inline-block px-3 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-widest ${
-          status === ConnectionStatus.CONNECTED ? 'bg-blue-600 text-white animate-pulse' : 'bg-slate-800 text-slate-400'
-        }`}>
-          {status === ConnectionStatus.CONNECTED ? 'СВЯЗЬ УСТАНОВЛЕНА' : 'ОЖИДАНИЕ СИГНАЛА'}
+    <div id="root" style={{ height: '100dvh', display: 'flex', flexDirection: 'column', overflow: 'hidden', position: 'relative' }}>
+      <header style={{ height: '50px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0 20px', flexShrink: 0, zIndex: 10, background: 'rgba(2,6,23,0.5)', borderBottom: '1px solid rgba(0,242,255,0.1)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+          <div style={{ width: '10px', height: '10px', borderRadius: '50%', background: status === ConnectionStatus.CONNECTED ? '#00f2ff' : '#475569', boxShadow: status === ConnectionStatus.CONNECTED ? '0 0 12px #00f2ff' : 'none' }}></div>
+          <div style={{ fontSize: '11px', color: '#00f2ff', fontWeight: 900, letterSpacing: '2px', textShadow: '0 0 8px rgba(0,242,255,0.6)' }}>
+            METAL BREATH LINK
+          </div>
         </div>
+        <button onClick={() => { if(confirm('Сбросить память Джуна?')) { setMemory(''); localStorage.clear(); location.reload(); }}} 
+                style={{ background: 'rgba(239,68,68,0.15)', border: '1px solid rgba(239,68,68,0.4)', color: '#ef4444', padding: '6px 14px', borderRadius: '10px', fontSize: '10px', fontWeight: 900, cursor: 'pointer', transition: '0.2s' }}>
+          СБРОС
+        </button>
       </header>
 
-      <div className="flex-1 flex flex-col items-center justify-center relative min-h-0">
-        <button
-          onClick={connectToJun}
-          className={`relative z-10 w-48 h-48 sm:w-56 sm:h-56 transition-all duration-500 active:scale-90 ${
-            status === ConnectionStatus.CONNECTED ? 'scale-105' : 'grayscale-[0.4]'
-          }`}
-        >
-          <div className={`absolute inset-0 rounded-full blur-3xl transition-opacity duration-1000 ${status === ConnectionStatus.CONNECTED ? 'bg-blue-500/30 opacity-100' : 'opacity-0'}`}></div>
-          <MetalBreathIcon active={status === ConnectionStatus.CONNECTED} speaking={userSpeech.length > 0} />
-        </button>
-
-        <div className="mt-4 w-full flex flex-col items-center gap-2 min-h-[90px]">
-          {userSpeech && (
-            <div className="bg-blue-500/10 border border-blue-400/30 px-3 py-1 rounded-lg max-w-[85%] animate-in fade-in slide-in-from-bottom-2">
-              <p className="text-[8px] text-blue-400 font-bold uppercase tracking-tighter">Напарник:</p>
-              <p className="text-xs text-blue-100 italic">"{userSpeech}"</p>
-            </div>
-          )}
-          
-          <p className="text-center px-4 text-sm font-bold text-white/90 leading-snug drop-shadow-md">
-            {lastMessage}
-          </p>
+      <main style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', position: 'relative', zIndex: 5 }}>
+        <div style={{ position: 'relative', width: '300px', height: '300px', display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={connectToJun}>
+          <MetalBreathIcon 
+            active={status === ConnectionStatus.CONNECTED} 
+            speaking={isJunSpeaking || (lastMessage.length > 0 && lastMessage !== 'СВЯЗЬ...' && lastMessage !== 'ЗАГРУЗКА...')} 
+            status={status}
+            analyser={analyserRef.current}
+            isUserSpeaking={userIsSpeaking}
+          />
         </div>
-      </div>
 
-      <div className="grid grid-cols-2 gap-2 mb-4 shrink-0">
-        <ModeButton label="ОБЩЕНИЕ" icon="💬" onClick={() => sendModeTrigger('Джун, давай просто поболтаем о чём угодно! Расскажи что-нибудь классное.')} color="emerald" />
-        <ModeButton label="МИССИЯ" icon="🛡️" onClick={() => sendModeTrigger('Джун, напАрник готов! Придумай новую захватывающую миссию!')} color="blue" />
-        <ModeButton label="НАУКА" icon="🔬" onClick={() => sendModeTrigger('Джун, напАрник хочет знаний! Используй поиск и расскажи удивительный факт.')} color="cyan" />
-        <ModeButton label="СКАНЕР" icon="🔍" onClick={() => sendModeTrigger('Джун, активируй сканер карт! Загадай робота!')} color="indigo" />
-        <ModeButton label="ЯЗЫК" icon="🌍" onClick={() => sendModeTrigger('Джун, научи напАрника новому секретному коду связи на английском!')} color="sky" className="col-span-2" />
-      </div>
+        <div style={{ 
+          textAlign: 'center', 
+          width: '100%', 
+          padding: '20px', 
+          display: 'flex', 
+          flexDirection: 'column', 
+          gap: '12px',
+          minHeight: '160px',
+          justifyContent: 'center'
+        }}>
+          {/* Текст Джуна */}
+          <div style={{ 
+            fontSize: lastMessage.length > 55 ? '18px' : '24px', 
+            fontWeight: '900', 
+            color: status === ConnectionStatus.ERROR ? '#ef4444' : 'white', 
+            letterSpacing: '0.5px', 
+            lineHeight: '1.3',
+            textTransform: 'uppercase',
+            maxWidth: '100%',
+            padding: '0 15px',
+            opacity: lastMessage ? 1 : 0,
+            transition: 'opacity 0.5s ease-out',
+            textShadow: '0 0 20px rgba(255,255,255,0.3)'
+          }}>
+            {lastMessage || (status === ConnectionStatus.CONNECTED ? '' : status === ConnectionStatus.DISCONNECTED ? 'СВЯЗЬ ГОТОВА К ЗАПУСКУ' : '')}
+          </div>
+        </div>
+      </main>
 
-      <div className="flex justify-between items-center px-4 py-2 border-t border-blue-500/20 text-[8px] tracking-[0.2em] text-blue-400 font-bold opacity-50 shrink-0">
-        <span>JUN-PRO-2.5</span>
-        <span className={status === ConnectionStatus.CONNECTED ? "text-green-400" : ""}>{status === ConnectionStatus.CONNECTED ? 'ONLINE' : 'OFFLINE'}</span>
-        <span>LINK: SECURE</span>
-      </div>
+      <footer style={{ 
+        display: 'grid', 
+        gridTemplateColumns: '1fr 1fr', 
+        gap: '12px', 
+        padding: '15px', 
+        flexShrink: 0, 
+        zIndex: 10,
+        background: 'rgba(2,6,23,0.9)',
+        backdropFilter: 'blur(15px)',
+        borderTop: '1px solid rgba(0,242,255,0.15)',
+        paddingBottom: 'calc(15px + env(safe-area-inset-bottom))'
+      }}>
+        <FooterBtn label="ОБЩЕНИЕ" onClick={() => triggerAction('Джун, напарник на связи! Расскажи что-нибудь крутое!')} color="#4f46e5" active={status === ConnectionStatus.CONNECTED} />
+        <FooterBtn label="МИССИЯ" onClick={() => triggerAction('Джун, дай мне крутую миссию на сегодня!')} color="#0ea5e9" active={status === ConnectionStatus.CONNECTED} />
+        <FooterBtn label="СКАНЕР" onClick={() => triggerAction('Джун, активируй сканер! Давай распознаем Метал-карту!')} color="#ec4899" active={status === ConnectionStatus.CONNECTED} />
+        <FooterBtn label="КАРТЫ" onClick={() => triggerAction('Джун, расскажи легенду про одного из Металлкардботов!')} color="#8b5cf6" active={status === ConnectionStatus.CONNECTED} />
+        <FooterBtn label="НАУКА" onClick={() => triggerAction('Джун, расскажи как работают твои гаджеты или роботы!')} color="#10b981" active={status === ConnectionStatus.CONNECTED} />
+        <FooterBtn label="ЯЗЫКИ" onClick={() => triggerAction('Джун, научи меня секретному геройскому коду на другом языке!')} color="#f59e0b" active={status === ConnectionStatus.CONNECTED} />
+      </footer>
     </div>
   );
 }
 
-const ModeButton = ({ label, icon, onClick, color, className = "" }: any) => {
-  const themes: any = {
-    blue: 'from-blue-600/50 to-blue-950 border-blue-400',
-    cyan: 'from-cyan-600/50 to-cyan-950 border-cyan-400',
-    indigo: 'from-indigo-600/50 to-indigo-950 border-indigo-400',
-    emerald: 'from-emerald-600/50 to-emerald-950 border-emerald-400',
-    sky: 'from-sky-600/50 to-sky-950 border-sky-400'
-  };
-
-  return (
-    <button
-      onClick={onClick}
-      className={`flex flex-row items-center justify-center gap-2 py-2.5 rounded-xl border-b-2 bg-gradient-to-b transition-all active:translate-y-0.5 shadow-lg backdrop-blur-md ${themes[color]} ${className}`}
-    >
-      <span className="text-lg">{icon}</span>
-      <span className="text-[9px] font-black tracking-widest text-blue-50 uppercase">{label}</span>
-    </button>
-  );
-};
+const FooterBtn = ({ label, onClick, color, active }: any) => (
+  <button 
+    onClick={onClick}
+    disabled={!active}
+    className="btn-active-flash"
+    style={{ 
+      background: active ? `linear-gradient(135deg, ${color}44, rgba(15,23,42,0.9))` : 'rgba(255,255,255,0.02)',
+      border: `1px solid ${active ? color : 'rgba(255,255,255,0.06)'}`,
+      borderRadius: '16px',
+      padding: '16px 4px',
+      color: active ? 'white' : '#475569',
+      fontSize: '12px',
+      fontWeight: '900',
+      letterSpacing: '1.5px',
+      transition: 'all 0.3s ease',
+      position: 'relative',
+      overflow: 'hidden',
+      cursor: active ? 'pointer' : 'default',
+      boxShadow: active ? `0 4px 20px ${color}33` : 'none'
+    }}
+  >
+    {active && <div className="animate-shimmer" style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', background: 'linear-gradient(90deg, transparent, rgba(255,255,255,0.1), transparent)', animation: 'shimmer 2.5s infinite' }}></div>}
+    {label}
+  </button>
+);

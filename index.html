@@ -3,45 +3,107 @@
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <title>Metal Breath Link</title>
-    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="manifest" href="/manifest.json">
+    <meta name="theme-color" content="#020617">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;700;900&display=swap" rel="stylesheet">
     <style>
+        :root {
+            --cyan: #00f2ff;
+            --gold: #ffcc00;
+            --indigo: #4f46e5;
+            --bg: #020617;
+            --neon-pink: #ff00ff;
+        }
+        
+        * {
+            box-sizing: border-box;
+            -webkit-tap-highlight-color: transparent;
+            user-select: none;
+        }
+
+        html, body {
+            overflow: hidden;
+            width: 100vw;
+            height: 100vh;
+            margin: 0;
+            padding: 0;
+            background-color: var(--bg);
+        }
+
         body {
             font-family: 'Inter', sans-serif;
-            background-color: #020617;
-            overflow: hidden;
-            touch-action: manipulation;
+            background: radial-gradient(circle at center, #0f172a 0%, #020617 100%);
+            color: white;
+            scrollbar-width: none;
         }
-        .metal-gradient {
-            background: radial-gradient(circle at center, #1e40af 0%, #1e3a8a 50%, #0f172a 100%);
+
+        #root {
+            height: 100dvh;
+            width: 100%;
+            display: flex;
+            flex-direction: column;
+            padding-top: env(safe-area-inset-top);
+            padding-bottom: env(safe-area-inset-bottom);
         }
-        @keyframes pulse-slow {
-            0%, 100% { transform: scale(1); opacity: 0.8; }
-            50% { transform: scale(1.05); opacity: 1; }
+
+        @keyframes rotate-slow { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+        @keyframes rotate-fast { from { transform: rotate(360deg); } to { transform: rotate(0deg); } }
+        @keyframes pulse-ring { 
+            0% { transform: scale(0.95); opacity: 0.5; }
+            50% { transform: scale(1.05); opacity: 0.8; }
+            100% { transform: scale(0.95); opacity: 0.5; }
         }
-        .animate-pulse-slow {
-            animation: pulse-slow 3s infinite ease-in-out;
+        @keyframes pulse-text { 0%, 100% { opacity: 0.4; } 50% { opacity: 1; text-shadow: 0 0 10px var(--cyan); } }
+        @keyframes float { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-8px); } }
+        @keyframes shimmer {
+            0% { transform: translateX(-100%) skewX(-15deg); }
+            100% { transform: translateX(200%) skewX(-15deg); }
         }
-        .glow-blue {
-            box-shadow: 0 0 20px rgba(59, 130, 246, 0.5);
+
+        .animate-rotate-slow { animation: rotate-slow 12s linear infinite; }
+        .animate-rotate-fast { animation: rotate-fast 6s linear infinite; }
+        .animate-pulse-ring { animation: pulse-ring 3s ease-in-out infinite; }
+        .animate-pulse-text { animation: pulse-text 2s ease-in-out infinite; }
+        .animate-float { animation: float 4s ease-in-out infinite; }
+
+        .btn-active-flash:active {
+            background: white !important;
+            box-shadow: 0 0 40px white;
+            transition: 0.1s;
+        }
+
+        .stars {
+            position: fixed;
+            top: 0; left: 0; width: 100%; height: 100%;
+            pointer-events: none;
+            background-image: radial-gradient(1px 1px at 25% 25%, #fff, transparent),
+                              radial-gradient(1px 1px at 75% 75%, #00f2ff, transparent);
+            background-size: 150px 150px;
+            opacity: 0.1;
+            z-index: 0;
         }
     </style>
 <script type="importmap">
 {
   "imports": {
+    "react": "https://esm.sh/react@^19.2.4",
     "react-dom/": "https://esm.sh/react-dom@^19.2.4/",
-    "@google/genai": "https://esm.sh/@google/genai@^1.38.0",
     "react/": "https://esm.sh/react@^19.2.4/",
-    "react": "https://esm.sh/react@^19.2.4"
+    "@google/genai": "https://esm.sh/@google/genai@^1.38.0",
+    "vite": "https://esm.sh/vite@^7.3.1",
+    "@vitejs/plugin-react": "https://esm.sh/@vitejs/plugin-react@^5.1.2"
   }
 }
 </script>
 <link rel="stylesheet" href="/index.css">
 </head>
-<body class="metal-gradient h-screen w-screen text-white select-none">
+<body>
+    <div class="stars"></div>
     <div id="root"></div>
-<script type="module" src="/index.tsx"></script>
+    <script type="module" src="/index.tsx"></script>
 </body>
 </html>
