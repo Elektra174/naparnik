@@ -1,8 +1,8 @@
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { GoogleGenAI, LiveServerMessage, Modality } from '@google/genai';
+import { GoogleGenAI, LiveServerMessage } from '@google/genai';
 import { ConnectionStatus } from './types';
-import { decode, decodeAudioData, createPcmBlob, playSFX, encode } from './services/audioHelpers';
+import { decode, decodeAudioData, createPcmBlob, playSFX } from './services/audioHelpers';
 
 const SYSTEM_INSTRUCTION = `
 РОЛЬ: Ты Джун из Металлкардбот. Ты - энергичный мальчик-герой, напарник и сверстник.
@@ -259,7 +259,8 @@ export default function App() {
       const sessionPromise = ai.live.connect({
         model: 'gemini-2.5-flash-native-audio-preview-12-2025',
         config: {
-          responseModalities: [Modality.AUDIO],
+          // Используем строковый литерал 'AUDIO' вместо перечисления для обхода ошибки "Operation not implemented"
+          responseModalities: ['AUDIO'],
           speechConfig: {
             voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Puck' } },
           },
@@ -326,7 +327,6 @@ export default function App() {
   }, [stopAudio, handleDisconnect]);
 
   const toggleMainAction = useCallback(() => {
-    // Если Джун говорит - мгновенно прерываем его речь по клику на круг тоже
     if (isJunSpeaking) {
       stopAudio();
       playSFX('click');
@@ -368,7 +368,18 @@ export default function App() {
         <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
           <div style={{ display: 'flex', flexDirection: 'column' }}>
             <div style={{ fontSize: '13px', color: '#00f2ff', fontWeight: 900, letterSpacing: '3.5px', textShadow: '0 0 12px var(--cyan)' }}>МЕТАЛ-БРЕЗ</div>
-            <div style={{ fontSize: '8px', color: 'rgba(0, 242, 255, 0.6)', fontWeight: 700, letterSpacing: '1.5px' }}>ПРЯМАЯ СВЯЗЬ</div>
+            {/* Надпись ПРЯМАЯ СВЯЗЬ теперь загорается при активации */}
+            <div style={{ 
+              fontSize: '8px', 
+              color: status === ConnectionStatus.CONNECTED ? '#00f2ff' : 'rgba(0, 242, 255, 0.4)', 
+              fontWeight: 700, 
+              letterSpacing: '1.5px',
+              transition: 'all 0.5s ease',
+              textShadow: status === ConnectionStatus.CONNECTED ? '0 0 8px #00f2ff' : 'none',
+              opacity: status === ConnectionStatus.CONNECTED ? 1 : 0.6
+            }}>
+              ПРЯМАЯ СВЯЗЬ
+            </div>
           </div>
           <div style={{ display: 'flex', gap: '4px', alignItems: 'flex-end', height: '16px' }}>
             {[1, 2, 3, 4, 5].map(i => (
@@ -385,7 +396,6 @@ export default function App() {
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-          {/* НЕОНОВЫЙ ДИНАМИК ДЛЯ ОСТАНОВКИ */}
           <button 
             onClick={(e) => { e.stopPropagation(); stopAudio(); playSFX('click'); }}
             disabled={!isJunSpeaking}
