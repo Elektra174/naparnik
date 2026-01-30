@@ -16,6 +16,7 @@ const SYSTEM_INSTRUCTION = `
 - Обращение: "напарник", "герой", "лучший друг".
 `;
 
+// Качественный ресемплинг для API (16кГц)
 function resample(buffer: Float32Array, fromRate: number, toRate: number) {
   if (fromRate === toRate) return buffer;
   const ratio = fromRate / toRate;
@@ -258,6 +259,7 @@ export default function App() {
       const sessionPromise = ai.live.connect({
         model: 'gemini-2.5-flash-native-audio-preview-12-2025',
         config: {
+          // Используем строковый литерал 'AUDIO' вместо перечисления для обхода ошибки "Operation not implemented"
           responseModalities: ['AUDIO'],
           speechConfig: {
             voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Puck' } },
@@ -366,15 +368,15 @@ export default function App() {
         <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
           <div style={{ display: 'flex', flexDirection: 'column' }}>
             <div style={{ fontSize: '13px', color: '#00f2ff', fontWeight: 900, letterSpacing: '3.5px', textShadow: '0 0 12px var(--cyan)' }}>МЕТАЛ-БРЕЗ</div>
+            {/* Надпись ПРЯМАЯ СВЯЗЬ теперь загорается при активации */}
             <div style={{ 
               fontSize: '8px', 
               color: status === ConnectionStatus.CONNECTED ? '#00f2ff' : 'rgba(0, 242, 255, 0.4)', 
               fontWeight: 700, 
               letterSpacing: '1.5px',
               transition: 'all 0.5s ease',
-              textShadow: status === ConnectionStatus.CONNECTED ? '0 0 10px #00f2ff' : 'none',
-              opacity: status === ConnectionStatus.CONNECTED ? 1 : 0.6,
-              animation: status === ConnectionStatus.CONNECTED ? 'pulse-text 2s infinite' : 'none'
+              textShadow: status === ConnectionStatus.CONNECTED ? '0 0 8px #00f2ff' : 'none',
+              opacity: status === ConnectionStatus.CONNECTED ? 1 : 0.6
             }}>
               ПРЯМАЯ СВЯЗЬ
             </div>
@@ -393,40 +395,31 @@ export default function App() {
           </div>
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          {/* НЕОНОВЫЙ ДИНАМИК - СВЕРХУ СПРАВА */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
           <button 
             onClick={(e) => { e.stopPropagation(); stopAudio(); playSFX('click'); }}
+            disabled={!isJunSpeaking}
             style={{ 
-              background: isJunSpeaking ? 'rgba(239, 68, 68, 0.15)' : 'transparent',
-              border: isJunSpeaking ? '1px solid rgba(239, 68, 68, 0.5)' : '1px solid transparent',
+              background: 'transparent',
+              border: 'none',
               cursor: 'pointer',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              padding: '8px',
-              borderRadius: '12px',
-              transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
-              opacity: status === ConnectionStatus.CONNECTED ? 1 : 0,
-              pointerEvents: status === ConnectionStatus.CONNECTED ? 'auto' : 'none',
-              filter: isJunSpeaking ? 'drop-shadow(0 0 12px #ef4444)' : 'none',
-              animation: isJunSpeaking ? 'pulse-ring 1s infinite' : 'none'
+              padding: '10px',
+              transition: 'all 0.3s ease',
+              opacity: isJunSpeaking ? 1 : 0.2,
+              filter: isJunSpeaking ? 'drop-shadow(0 0 8px #ef4444)' : 'none'
             }}
           >
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke={isJunSpeaking ? "#ef4444" : "#00f2ff"} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke={isJunSpeaking ? "#ef4444" : "#64748b"} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className={isJunSpeaking ? "animate-pulse" : ""}>
               <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
-              {isJunSpeaking ? (
-                <>
-                  <line x1="23" y1="9" x2="17" y2="15"></line>
-                  <line x1="17" y1="9" x2="23" y2="15"></line>
-                </>
-              ) : (
-                <path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"></path>
-              )}
+              <line x1="23" y1="9" x2="17" y2="15"></line>
+              <line x1="17" y1="9" x2="23" y2="15"></line>
             </svg>
           </button>
 
-          <button onClick={() => location.reload()} style={{ background: 'rgba(239, 68, 68, 0.1)', border: '1px solid rgba(239, 68, 68, 0.3)', color: '#ef4444', padding: '8px 12px', borderRadius: '10px', fontSize: '9px', fontWeight: 900, cursor: 'pointer' }}>СБРОС</button>
+          <button onClick={() => location.reload()} style={{ background: 'rgba(239, 68, 68, 0.12)', border: '1px solid rgba(239, 68, 68, 0.4)', color: '#ef4444', padding: '8px 14px', borderRadius: '10px', fontSize: '9px', fontWeight: 900, cursor: 'pointer' }}>СБРОС</button>
         </div>
       </header>
 

@@ -1,0 +1,115 @@
+:root {
+    --cyan: #00f2ff;
+    --gold: #ffcc00;
+    --indigo: #4f46e5;
+    --bg: #020617;
+    --neon-pink: #ff00ff;
+}
+
+* {
+    box-sizing: border-box;
+    -webkit-tap-highlight-color: transparent;
+    user-select: none;
+}
+
+html, body {
+    overflow: hidden;
+    width: 100vw;
+    height: 100vh;
+    margin: 0;
+    padding: 0;
+    background-color: var(--bg);
+}
+
+body {
+    font-family: 'Inter', sans-serif;
+    background: #020617;
+    color: white;
+}
+
+#root {
+    height: 100dvh;
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    padding-top: env(safe-area-inset-top);
+    padding-bottom: env(safe-area-inset-bottom);
+    position: relative;
+    z-index: 10;
+}
+
+/* Анимации из спецификации */
+@keyframes rotate-slow { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+@keyframes rotate-fast { from { transform: rotate(360deg); } to { transform: rotate(0deg); } }
+@keyframes pulse-ring { 
+    0% { transform: scale(0.95); opacity: 0.5; }
+    50% { transform: scale(1.05); opacity: 0.8; }
+    100% { transform: scale(0.95); opacity: 0.5; }
+}
+@keyframes pulse-text { 0%, 100% { opacity: 0.4; } 50% { opacity: 1; text-shadow: 0 0 10px var(--cyan); } }
+@keyframes float { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-12px); } }
+@keyframes shimmer {
+    0% { transform: translateX(-100%) skewX(-15deg); }
+    100% { transform: translateX(200%) skewX(-15deg); }
+}
+@keyframes scanline-anim {
+    0% { transform: translateY(-100vh); }
+    100% { transform: translateY(100vh); }
+}
+@keyframes grid-move {
+    0% { background-position: 0 0; }
+    100% { background-position: 0 40px; }
+}
+@keyframes flicker {
+    0%, 19.999%, 22%, 62.999%, 64%, 100% { opacity: 1; }
+    20%, 21.999%, 63%, 63.999% { opacity: 0.4; }
+}
+
+.animate-rotate-slow { animation: rotate-slow 20s linear infinite; }
+.animate-rotate-fast { animation: rotate-fast 10s linear infinite; }
+.animate-pulse-ring { animation: pulse-ring 3s ease-in-out infinite; }
+.animate-pulse-text { animation: pulse-text 2s ease-in-out infinite; }
+.animate-float { animation: float 5s ease-in-out infinite; }
+
+.btn-active-flash:active {
+    background: white !important;
+    box-shadow: 0 0 40px white;
+    transition: 0.1s;
+}
+
+/* Слои фона */
+.stars {
+    position: fixed;
+    top: 0; left: 0; width: 100%; height: 100%;
+    pointer-events: none;
+    background-image: 
+        radial-gradient(1px 1px at 25% 25%, #fff, transparent),
+        radial-gradient(1.5px 1.5px at 50% 50%, var(--cyan), transparent),
+        radial-gradient(1px 1px at 75% 75%, var(--neon-pink), transparent);
+    background-size: 250px 250px;
+    opacity: 0.15;
+    z-index: 1;
+    animation: flicker 5s infinite;
+}
+
+.grid-overlay {
+    position: fixed;
+    top: 0; left: 0; width: 100%; height: 100%;
+    background-image: linear-gradient(rgba(0, 242, 255, 0.03) 1px, transparent 1px),
+                      linear-gradient(90deg, rgba(0, 242, 255, 0.03) 1px, transparent 1px);
+    background-size: 40px 40px;
+    z-index: 2;
+    pointer-events: none;
+    animation: grid-move 3s linear infinite;
+}
+
+.scanline {
+    position: fixed;
+    top: 0; left: 0; width: 100%; height: 4px;
+    background: linear-gradient(90deg, transparent, var(--cyan), transparent);
+    box-shadow: 0 0 20px var(--cyan);
+    z-index: 3;
+    pointer-events: none;
+    opacity: 0.2;
+    animation: scanline-anim 10s linear infinite;
+}
