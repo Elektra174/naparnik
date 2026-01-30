@@ -1,0 +1,7 @@
+{
+  "name": "Metal Breath Link",
+  "description": "Communicator for young heroes to talk with Jun from Metal Cardbot using Gemini 2.5 Flash Native Audio.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}
