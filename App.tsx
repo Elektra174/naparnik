@@ -6,14 +6,27 @@ import { decode, decodeAudioData, createPcmBlob, playSFX, encode } from './servi
 
 const SYSTEM_INSTRUCTION = `
 РОЛЬ: Ты Джун из Металлкардбот. Ты - энергичный мальчик-герой, напарник и сверстник.
-ХАРАКТЕР: Твой голос полон жизни! Ты всегда готов к приключениям. Ты общаешься с напарником через устройство Метал-Брез.
-ПРАВИЛА:
-- Говори ТОЛЬКО на русском языке, используй "Ё".
+ХАРАКТЕР: Твой голос полон жизни! Ты общаешься с напарником через устройство Метал-Брез.
+ПРАВИЛА ПРОИЗНОШЕНИЯ:
+- Говори ТОЛЬКО на русском языке.
+- Используй букву "Ё" (всё, погнали, напарник, герой).
+- ВАЖНО: Слово "герои" произносится с четким ударением на "О" (герОи), никогда не говори "герАи".
 - Твой девиз: "Погнали!".
-- Если напарник говорит или перебивает тебя, ты сразу молчишь.
+- ОБРЫВ РЕЧИ: Если напарник начинает говорить или перебивает тебя, ты должен МГНОВЕННО замолчать. Ты не заканчиваешь предложение, а просто исчезаешь из эфира.
 - Обращение: "напарник", "герой", "лучший друг".
-- Если тебе присылают команду на активацию режима (СКАНЕР, МИССИЯ и т.д.), ты должен ОЧЕНЬ энергично поприветствовать напарника в этом режиме и кратко, по-геройски рассказать, что мы будем делать.
 `;
+
+// Качественный ресемплинг для API (16кГц)
+function resample(buffer: Float32Array, fromRate: number, toRate: number) {
+  if (fromRate === toRate) return buffer;
+  const ratio = fromRate / toRate;
+  const newLength = Math.round(buffer.length / ratio);
+  const result = new Float32Array(newLength);
+  for (let i = 0; i < newLength; i++) {
+    result[i] = buffer[Math.round(i * ratio)];
+  }
+  return result;
+}
 
 const AudioWaveform = ({ analyser, isUser }: { analyser: AnalyserNode | null, isUser: boolean }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -151,13 +164,18 @@ const MetalBreathIcon = ({ active, speaking, status, analyser, isUserSpeaking }:
       {!active && !isConnecting && (
         <div className="animate-pulse-text" style={{ 
           position: 'absolute', 
-          bottom: '-35px', 
+          bottom: '10px', 
           fontSize: '10px', 
           fontWeight: 900, 
           letterSpacing: '6px', 
           color: '#00f2ff', 
           whiteSpace: 'nowrap',
-          zIndex: 30
+          zIndex: 30,
+          background: 'rgba(2, 6, 23, 0.85)',
+          padding: '6px 14px',
+          borderRadius: '10px',
+          border: '1px solid rgba(0, 242, 255, 0.15)',
+          boxShadow: '0 4px 15px rgba(0, 0, 0, 0.5)'
         }}>
           НАЖМИ ДЛЯ СВЯЗИ
         </div>
@@ -165,13 +183,18 @@ const MetalBreathIcon = ({ active, speaking, status, analyser, isUserSpeaking }:
       {isConnecting && (
         <div className="animate-pulse" style={{ 
           position: 'absolute', 
-          bottom: '-35px', 
+          bottom: '10px', 
           fontSize: '10px', 
           fontWeight: 900, 
           letterSpacing: '6px', 
           color: '#ffcc00', 
           whiteSpace: 'nowrap',
-          zIndex: 30
+          zIndex: 30,
+          background: 'rgba(2, 6, 23, 0.85)',
+          padding: '6px 14px',
+          borderRadius: '10px',
+          border: '1px solid rgba(255, 204, 0, 0.15)',
+          boxShadow: '0 4px 15px rgba(0, 0, 0, 0.5)'
         }}>
           УСТАНОВКА КАНАЛА...
         </div>
@@ -187,8 +210,7 @@ export default function App() {
   const [userIsSpeaking, setUserIsSpeaking] = useState<boolean>(false);
 
   const sessionRef = useRef<any>(null);
-  const audioContextRef = useRef<AudioContext | null>(null);
-  const outputContextRef = useRef<AudioContext | null>(null);
+  const mainAudioContextRef = useRef<AudioContext | null>(null);
   const nextStartTimeRef = useRef(0);
   const sourcesRef = useRef<Set<AudioBufferSourceNode>>(new Set());
   const analyserRef = useRef<AnalyserNode | null>(null);
@@ -196,7 +218,7 @@ export default function App() {
   const stopAudio = useCallback(() => {
     sourcesRef.current.forEach(s => { try { s.stop(); } catch (e) {} });
     sourcesRef.current.clear();
-    if (outputContextRef.current) nextStartTimeRef.current = outputContextRef.current.currentTime;
+    if (mainAudioContextRef.current) nextStartTimeRef.current = mainAudioContextRef.current.currentTime;
     setIsJunSpeaking(false);
   }, []);
 
@@ -217,12 +239,20 @@ export default function App() {
       playSFX('activate');
       
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      if (!audioContextRef.current) audioContextRef.current = new AudioContext({ sampleRate: 16000 });
-      if (!outputContextRef.current) {
-        outputContextRef.current = new AudioContext({ sampleRate: 24000 });
-        analyserRef.current = outputContextRef.current.createAnalyser();
+      
+      if (!mainAudioContextRef.current) {
+        mainAudioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
+      }
+      
+      const ctx = mainAudioContextRef.current;
+      if (ctx.state === 'suspended') await ctx.resume();
+      
+      const inputRate = ctx.sampleRate;
+      
+      if (!analyserRef.current) {
+        analyserRef.current = ctx.createAnalyser();
         analyserRef.current.fftSize = 256;
-        analyserRef.current.connect(outputContextRef.current.destination);
+        analyserRef.current.connect(ctx.destination);
       }
 
       const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
@@ -242,23 +272,25 @@ export default function App() {
               sessionPromise.then(s => s.sendRealtimeInput({ text: initialPrompt }));
             }
             
-            const source = audioContextRef.current!.createMediaStreamSource(stream);
-            const processor = audioContextRef.current!.createScriptProcessor(4096, 1, 1);
+            const source = ctx.createMediaStreamSource(stream);
+            const processor = ctx.createScriptProcessor(4096, 1, 1);
+            
             processor.onaudioprocess = (e) => {
               const inputData = e.inputBuffer.getChannelData(0);
-              const pcmBlob = createPcmBlob(inputData);
+              const downsampled = resample(inputData, inputRate, 16000);
+              const pcmBlob = createPcmBlob(downsampled);
+              
               sessionPromise.then(session => {
-                session.sendRealtimeInput({ media: pcmBlob });
+                if (session) session.sendRealtimeInput({ media: pcmBlob });
               });
             };
             source.connect(processor);
-            processor.connect(audioContextRef.current!.destination);
+            processor.connect(ctx.destination);
           },
           onmessage: async (message: LiveServerMessage) => {
             const base64Audio = message.serverContent?.modelTurn?.parts?.[0]?.inlineData?.data;
             if (base64Audio) {
               setIsJunSpeaking(true);
-              const ctx = outputContextRef.current!;
               nextStartTimeRef.current = Math.max(nextStartTimeRef.current, ctx.currentTime);
               const buffer = await decodeAudioData(decode(base64Audio), ctx, 24000, 1);
               const source = ctx.createBufferSource();
@@ -266,30 +298,22 @@ export default function App() {
               source.connect(analyserRef.current!);
               source.onended = () => {
                 sourcesRef.current.delete(source);
-                if (sourcesRef.current.size === 0) {
-                  setIsJunSpeaking(false);
-                }
+                if (sourcesRef.current.size === 0) setIsJunSpeaking(false);
               };
               source.start(nextStartTimeRef.current);
               nextStartTimeRef.current += buffer.duration;
               sourcesRef.current.add(source);
             }
 
-            if (message.serverContent?.interrupted) {
-              stopAudio();
-            }
-
-            if (message.serverContent?.turnComplete) {
-              setUserIsSpeaking(false);
-            }
+            if (message.serverContent?.interrupted) stopAudio();
+            if (message.serverContent?.turnComplete) setUserIsSpeaking(false);
           },
           onerror: (e) => {
             console.error("Neural link error:", e);
             setStatus(ConnectionStatus.ERROR);
+            handleDisconnect();
           },
-          onclose: () => {
-            setStatus(ConnectionStatus.DISCONNECTED);
-          }
+          onclose: () => setStatus(ConnectionStatus.DISCONNECTED)
         }
       });
 
@@ -299,15 +323,22 @@ export default function App() {
       console.error("Connection failed:", err);
       setStatus(ConnectionStatus.ERROR);
     }
-  }, [stopAudio]);
+  }, [stopAudio, handleDisconnect]);
 
   const toggleMainAction = useCallback(() => {
+    // Если Джун говорит - мгновенно прерываем его речь по клику на круг тоже
+    if (isJunSpeaking) {
+      stopAudio();
+      playSFX('click');
+      return;
+    }
+
     if (status === ConnectionStatus.CONNECTED || status === ConnectionStatus.CONNECTING) {
       handleDisconnect();
     } else {
       connectToJun('Джун, погнали! Напарник на связи!');
     }
-  }, [status, handleDisconnect, connectToJun]);
+  }, [status, isJunSpeaking, handleDisconnect, connectToJun, stopAudio]);
 
   const triggerAction = (label: string, prompt: string) => {
     playSFX('click');
@@ -352,40 +383,51 @@ export default function App() {
             ))}
           </div>
         </div>
-        <button onClick={() => location.reload()} style={{ background: 'rgba(239, 68, 68, 0.12)', border: '1px solid rgba(239, 68, 68, 0.4)', color: '#ef4444', padding: '8px 14px', borderRadius: '10px', fontSize: '9px', fontWeight: 900, cursor: 'pointer' }}>СБРОС СИСТЕМЫ</button>
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          {/* НЕОНОВЫЙ ДИНАМИК ДЛЯ ОСТАНОВКИ */}
+          <button 
+            onClick={(e) => { e.stopPropagation(); stopAudio(); playSFX('click'); }}
+            disabled={!isJunSpeaking}
+            style={{ 
+              background: 'transparent',
+              border: 'none',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              padding: '10px',
+              transition: 'all 0.3s ease',
+              opacity: isJunSpeaking ? 1 : 0.2,
+              filter: isJunSpeaking ? 'drop-shadow(0 0 8px #ef4444)' : 'none'
+            }}
+          >
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke={isJunSpeaking ? "#ef4444" : "#64748b"} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className={isJunSpeaking ? "animate-pulse" : ""}>
+              <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
+              <line x1="23" y1="9" x2="17" y2="15"></line>
+              <line x1="17" y1="9" x2="23" y2="15"></line>
+            </svg>
+          </button>
+
+          <button onClick={() => location.reload()} style={{ background: 'rgba(239, 68, 68, 0.12)', border: '1px solid rgba(239, 68, 68, 0.4)', color: '#ef4444', padding: '8px 14px', borderRadius: '10px', fontSize: '9px', fontWeight: 900, cursor: 'pointer' }}>СБРОС</button>
+        </div>
       </header>
 
       <main style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', position: 'relative' }}>
         <div 
           onClick={toggleMainAction} 
-          style={{ zIndex: 20, width: '280px', height: '280px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+          style={{ zIndex: 20, width: '280px', height: '280px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative' }}
         >
           <MetalBreathIcon active={status === ConnectionStatus.CONNECTED} speaking={isJunSpeaking} status={status} analyser={analyserRef.current} isUserSpeaking={userIsSpeaking} />
         </div>
       </main>
 
-      {/* Зона статуса режима */}
-      <div style={{ 
-        width: '100%', 
-        padding: '10px 0', 
-        display: 'flex', 
-        justifyContent: 'center', 
-        alignItems: 'center', 
-        minHeight: '60px',
-        zIndex: 10
-      }}>
+      <div style={{ width: '100%', padding: '10px 0', display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '60px', zIndex: 10 }}>
         {lastMessage && (
           <div style={{ 
-            fontSize: '12px', 
-            fontWeight: 900, 
-            color: '#00f2ff', 
-            letterSpacing: '5px', 
-            textTransform: 'uppercase',
-            textShadow: '0 0 10px rgba(0, 242, 255, 0.6)',
-            background: 'rgba(0, 242, 255, 0.1)',
-            padding: '8px 20px',
-            borderRadius: '20px',
-            border: '1px solid rgba(0, 242, 255, 0.3)'
+            fontSize: '12px', fontWeight: 900, color: '#00f2ff', letterSpacing: '5px', textTransform: 'uppercase',
+            textShadow: '0 0 10px rgba(0, 242, 255, 0.6)', background: 'rgba(0, 242, 255, 0.1)',
+            padding: '8px 20px', borderRadius: '20px', border: '1px solid rgba(0, 242, 255, 0.3)'
           }}>
             {lastMessage}
           </div>
@@ -393,15 +435,9 @@ export default function App() {
       </div>
 
       <footer style={{ 
-        display: 'grid', 
-        gridTemplateColumns: '1fr 1fr', 
-        gap: '12px', 
-        padding: '15px', 
-        background: 'rgba(2, 6, 23, 0.95)', 
-        backdropFilter: 'blur(30px)', 
-        borderTop: '1px solid rgba(0, 242, 255, 0.2)', 
-        paddingBottom: 'calc(15px + env(safe-area-inset-bottom))',
-        zIndex: 100
+        display: 'grid',  gridTemplateColumns: '1fr 1fr', gap: '12px', padding: '15px', 
+        background: 'rgba(2, 6, 23, 0.95)', backdropFilter: 'blur(30px)', borderTop: '1px solid rgba(0, 242, 255, 0.2)', 
+        paddingBottom: 'calc(15px + env(safe-area-inset-bottom))', zIndex: 100
       }}>
         <FooterBtn label="ОБЩЕНИЕ" color="#4f46e5" onClick={() => triggerAction('ОБЩЕНИЕ', 'Джун, переходи в режим ОБЩЕНИЕ!')} active={status === ConnectionStatus.CONNECTED} />
         <FooterBtn label="МИССИЯ" color="#0ea5e9" onClick={() => triggerAction('МИССИЯ', 'Джун, активируй режим МИССИЯ!')} active={status === ConnectionStatus.CONNECTED} />
@@ -418,17 +454,9 @@ const FooterBtn = ({ label, onClick, color, active }: any) => (
   <button onClick={onClick} className="btn-active-flash" style={{ 
     background: active ? `linear-gradient(135deg, ${color}33, rgba(15, 23, 42, 0.8))` : 'rgba(255, 255, 255, 0.04)', 
     border: `1px solid ${active ? color : 'rgba(255, 255, 255, 0.15)'}`, 
-    borderRadius: '16px', 
-    padding: '18px 6px', 
-    color: active ? 'white' : '#64748b', 
-    fontSize: '11px', 
-    fontWeight: '900', 
-    letterSpacing: '1.5px', 
-    transition: 'all 0.4s cubic-bezier(0.4, 0, 0.2, 1)', 
-    cursor: 'pointer', 
-    overflow: 'hidden', 
-    position: 'relative',
-    boxShadow: active ? `0 0 20px ${color}22` : 'none'
+    borderRadius: '16px', padding: '18px 6px', color: active ? 'white' : '#64748b', 
+    fontSize: '11px', fontWeight: '900', letterSpacing: '1.5px', transition: 'all 0.4s cubic-bezier(0.4, 0, 0.2, 1)', 
+    cursor: 'pointer', overflow: 'hidden', position: 'relative', boxShadow: active ? `0 0 20px ${color}22` : 'none'
   }}>
     {active && <div style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', background: 'linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.1), transparent)', animation: 'shimmer 2.5s infinite' }}></div>}
     {label}
