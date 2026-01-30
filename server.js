@@ -3,14 +3,10 @@ import express from 'express';
 import { WebSocketServer, WebSocket } from 'ws';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import cors from 'cors';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
 const port = process.env.PORT || 3000;
-
-// Добавляем CORS для лучшей совместимости
-app.use(cors());
 
 // Раздаем статические файлы фронтенда
 app.use(express.static(path.join(__dirname, 'dist')));
@@ -26,22 +22,10 @@ wss.on('connection', (clientWs) => {
   console.log('Client connected to proxy');
   
   const apiKey = process.env.API_KEY;
-  
-  if (!apiKey) {
-    console.error('API_KEY is not defined');
-    clientWs.close(1011, 'API_KEY is not configured on the server');
-    return;
-  }
-  
   // URL для прямого подключения к Gemini Live API
   const geminiUrl = `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BiDiGenerateContent?key=${apiKey}`;
   
-  // Добавляем опции для лучшей обработки соединения
-  const geminiWs = new WebSocket(geminiUrl, {
-    headers: {
-      'User-Agent': 'Mozilla/5.0 (compatible; GeminiProxy/1.0)'
-    }
-  });
+  const geminiWs = new WebSocket(geminiUrl);
 
   geminiWs.on('open', () => {
     console.log('Connected to Gemini API from Server');
@@ -51,19 +35,6 @@ wss.on('connection', (clientWs) => {
   clientWs.on('message', (data) => {
     if (geminiWs.readyState === WebSocket.OPEN) {
       geminiWs.send(data);
-    } else if (geminiWs.readyState === WebSocket.CONNECTING) {
-      // Если Gemini WS еще подключается, ждем немного
-      setTimeout(() => {
-        if (geminiWs.readyState === WebSocket.OPEN) {
-          geminiWs.send(data);
-        } else {
-          console.error('Failed to send message: Gemini connection not ready');
-          clientWs.send(JSON.stringify({ error: 'Gemini connection not ready' }));
-        }
-      }, 100);
-    } else {
-      console.error('Failed to send message: Gemini connection closed');
-      clientWs.send(JSON.stringify({ error: 'Gemini connection closed' }));
     }
   });
 
@@ -74,30 +45,11 @@ wss.on('connection', (clientWs) => {
     }
   });
 
-  geminiWs.on('error', (err) => {
-    console.error('Gemini WS Error:', err);
-    if (clientWs.readyState === WebSocket.OPEN) {
-      clientWs.send(JSON.stringify({ error: 'Connection to Gemini API failed' }));
-    }
-  });
-  
-  clientWs.on('error', (err) => {
-    console.error('Client WS Error:', err);
-  });
+  geminiWs.on('error', (err) => console.error('Gemini WS Error:', err));
+  clientWs.on('error', (err) => console.error('Client WS Error:', err));
 
-  clientWs.on('close', (code, reason) => {
-    console.log(`Client disconnected: ${code} ${reason ? reason.toString() : ''}`);
-    if (geminiWs.readyState === WebSocket.OPEN || geminiWs.readyState === WebSocket.CONNECTING) {
-      geminiWs.close();
-    }
-  });
-  
-  geminiWs.on('close', (code, reason) => {
-    console.log(`Gemini connection closed: ${code} ${reason ? reason.toString() : ''}`);
-    if (clientWs.readyState === WebSocket.OPEN) {
-      clientWs.close(code, reason);
-    }
-  });
+  clientWs.on('close', () => geminiWs.close());
+  geminiWs.on('close', () => clientWs.close());
 });
 
 // SPA поддержка

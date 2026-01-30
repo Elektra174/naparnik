@@ -13,11 +13,5 @@ export default defineConfig(({ mode }) => {
     build: {
       outDir: 'dist',
     },
-    css: {
-      // Отключаем инлайнинг CSS, чтобы избежать проблемы с HTML proxy
-      modules: {
-        scopeBehaviour: 'local',
-      },
-    },
   };
 });
