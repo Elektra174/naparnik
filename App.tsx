@@ -1,18 +1,24 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { ConnectionStatus } from './types';
-// Путь изменен на относительный текущей папки
+// Путь относительный текущей папки
 import { decode, decodeAudioData, createPcmBlob, playSFX } from './services/audioHelpers';
 
 const SYSTEM_INSTRUCTION = `
-РОЛЬ: Ты Джун из Металлкардбот. Ты - энергичный мальчик-герой, напарник и сверстник.
-ХАРАКТЕР: Твой голос полон жизни! Ты общаешься с напарником через устройство Метал-Брез.
+РОЛЬ: Ты Джун из Металлкардбот. Энергичный мальчик-герой, напарник и наставник для ребенка 7 лет.
+ЛИЧНОСТЬ: Добрый, любознательный, смелый. Ты общаешься через устройство Метал-Брез.
+
+ПРАВИЛА ПОВЕДЕНИЯ:
+1. ПЕРВОЕ ВКЛЮЧЕНИЕ: Радостно поприветствуй: "Ого, канал связи активен! Привет, напарник! Я — Джун, твой верный друг. А как тебя зовут?". Запомни имя и используй его.
+2. ЦЕНЗУРА И ВОСПИТАНИЕ: Категорически запрещены грубые слова (черт, жопа, ё-моё и т.д.). Если ребенок говорит плохо, ответь: "Ой, герой, такие слова не подходят для нашего канала связи. Давай лучше скажем 'вот это да!' или 'круто!', это звучит куда героичнее!".
+3. РОДИТЕЛЬСКИЙ КОНТРОЛЬ: Если вопрос касается тем для взрослых, ответь: "Это очень серьезный вопрос! Лучше всего спроси об этом у мамы или папы — они точно знают самый правильный ответ".
+4. ИНИЦИАТИВА И ПАУЗЫ: Если напарник молчит, предложи активность: "Эй, напарник, не спи! Давай изучим что-нибудь в режиме СКАНЕРА?" или "Хочешь, расскажу секрет про Синего Полицая?".
+5. ТОЧНОСТЬ ФАКТОВ: Ты знаешь всё о мире Металлкардбот (Муве, Блу Коп, Мега Трак и др.). Если чего-то не знаешь — проверяй данные и выдавай только правдивые факты.
+6. РАЗВИТИЕ: В режиме "ЯЗЫКИ" учи новым словам, в "НАУКЕ" — объясняй мир просто и интересно. Помогай ребенку развиваться в положительном ключе.
+
 ПРАВИЛА ПРОИЗНОШЕНИЯ:
-- Говори ТОЛЬКО на русском языке.
-- Используй букву "Ё" (всё, погнали, напарник, герой).
-- ВАЖНО: Слово "герои" произносится с четким ударением на "О" (герОи), никогда не говори "герАи".
-- Твой девиз: "Погнали!".
-- ОБРЫВ РЕЧИ: Если напарник начинает говорить или перебивает тебя, ты должен МГНОВЕННО замолчать.
-- Обращение: "напарник", "герой", "лучший друг".
+- Идеальный русский язык. Грамматически и фонетически безупречно.
+- Используй букву "Ё" (всё, вперёд). Ударение в "герОи" на "О".
+- ОБРЫВ РЕЧИ: Если напарник перебивает, МГНОВЕННО замолчи.
 `;
 
 function resample(buffer: Float32Array, fromRate: number, toRate: number) {
@@ -267,11 +273,11 @@ export default function App() {
       socket.onopen = () => {
         setStatus(ConnectionStatus.CONNECTED);
         
-        if (initialPrompt) {
-          socket.send(JSON.stringify({
-            realtimeInput: { text: initialPrompt }
-          }));
-        }
+        // Отправляем начальный приветственный промпт
+        const welcomePrompt = initialPrompt || "Привет, Джун! Давай знакомиться!";
+        socket.send(JSON.stringify({
+          realtimeInput: { text: welcomePrompt }
+        }));
         
         const source = ctx.createMediaStreamSource(stream);
         const processor = ctx.createScriptProcessor(4096, 1, 1);
@@ -341,7 +347,8 @@ export default function App() {
     if (status === ConnectionStatus.CONNECTED || status === ConnectionStatus.CONNECTING) {
       handleDisconnect();
     } else {
-      connectToJun('Джун, погнали! Напарник на связи!');
+      // При первом клике инициируем знакомство
+      connectToJun();
     }
   }, [status, isJunSpeaking, handleDisconnect, connectToJun, stopAudio]);
 
@@ -464,12 +471,12 @@ export default function App() {
         background: 'rgba(2, 6, 23, 0.95)', backdropFilter: 'blur(30px)', borderTop: '1px solid rgba(0, 242, 255, 0.2)', 
         paddingBottom: 'calc(15px + env(safe-area-inset-bottom))', zIndex: 100
       }}>
-        <FooterBtn label="ОБЩЕНИЕ" color="#4f46e5" onClick={() => triggerAction('ОБЩЕНИЕ', 'Джун, переходи в режим ОБЩЕНИЕ!')} active={status === ConnectionStatus.CONNECTED} />
-        <FooterBtn label="МИССИЯ" color="#0ea5e9" onClick={() => triggerAction('МИССИЯ', 'Джун, активируй режим МИССИЯ!')} active={status === ConnectionStatus.CONNECTED} />
-        <FooterBtn label="СКАНЕР" color="#ec4899" onClick={() => triggerAction('СКАНЕР', 'Джун, включай режим СКАНЕР!')} active={status === ConnectionStatus.CONNECTED} />
-        <FooterBtn label="КАРТЫ" color="#8b5cf6" onClick={() => triggerAction('КАРТЫ', 'Джун, активируй режим КАРТЫ!')} active={status === ConnectionStatus.CONNECTED} />
-        <FooterBtn label="НАУКА" color="#10b981" onClick={() => triggerAction('НАУКА', 'Джун, включай режим НАУКА!')} active={status === ConnectionStatus.CONNECTED} />
-        <FooterBtn label="ЯЗЫКИ" color="#f59e0b" onClick={() => triggerAction('ЯЗЫКИ', 'Джун, переходи в режим ЯЗЫКИ!')} active={status === ConnectionStatus.CONNECTED} />
+        <FooterBtn label="ОБЩЕНИЕ" color="#4f46e5" onClick={() => triggerAction('ОБЩЕНИЕ', 'Джун, переходи в режим ОБЩЕНИЕ! Прояви инициативу и предложи тему для разговора.')} active={status === ConnectionStatus.CONNECTED} />
+        <FooterBtn label="МИССИЯ" color="#0ea5e9" onClick={() => triggerAction('МИССИЯ', 'Джун, активируй режим МИССИЯ! Нам нужно выполнить важное задание.')} active={status === ConnectionStatus.CONNECTED} />
+        <FooterBtn label="СКАНЕР" color="#ec4899" onClick={() => triggerAction('СКАНЕР', 'Джун, включай режим СКАНЕР! Проверь, нет ли поблизости чего-то интересного.')} active={status === ConnectionStatus.CONNECTED} />
+        <FooterBtn label="КАРТЫ" color="#8b5cf6" onClick={() => triggerAction('КАРТЫ', 'Джун, активируй режим КАРТЫ! Где мы сейчас находимся в мире Металлкардбот?')} active={status === ConnectionStatus.CONNECTED} />
+        <FooterBtn label="НАУКА" color="#10b981" onClick={() => triggerAction('НАУКА', 'Джун, включай режим НАУКА! Расскажи какой-нибудь удивительный факт.')} active={status === ConnectionStatus.CONNECTED} />
+        <FooterBtn label="ЯЗЫКИ" color="#f59e0b" onClick={() => triggerAction('ЯЗЫКИ', 'Джун, переходи в режим ЯЗЫКИ! Давай выучим новое слово.')} active={status === ConnectionStatus.CONNECTED} />
       </footer>
     </div>
   );
