@@ -70,7 +70,10 @@ wss.on('connection', (clientWs, req) => {
 
   // Используем v1alpha для preview моделей
   const geminiUrl = `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BiDiGenerateContent?key=${apiKey}`;
-  
+
+  // Логируем URL без API ключа
+  console.log('🔗 Подключение к:', geminiUrl.replace(apiKey, '***'));
+
   const geminiWs = new WebSocket(geminiUrl, [], {
     // Таймауты для стабильности соединения
     handshakeTimeout: 30000,
@@ -79,6 +82,15 @@ wss.on('connection', (clientWs, req) => {
 
   // Пересылаем сообщения от Напарника (браузера) к Джуну (Google)
   clientWs.on('message', (data) => {
+    console.log('📩 Получено сообщение от клиента, размер:', data.length, 'байт');
+    // Логируем первые 200 символов для отладки (может быть бинарные данные)
+    try {
+      const preview = data.toString('utf-8', 0, Math.min(data.length, 200));
+      console.log('📄 Содержимое (первые 200 символов):', preview);
+    } catch (e) {
+      console.log('📄 Бинарные данные (не текст)');
+    }
+
     if (geminiWs.readyState === WebSocket.OPEN) {
       geminiWs.send(data);
     }
@@ -99,6 +111,7 @@ wss.on('connection', (clientWs, req) => {
   // Обработка ошибок с логированием для диагностики проблем с VPN/регионами
   geminiWs.on('error', (err) => {
     console.error('❌ Ошибка на стороне Джуна (Google API):', err.message);
+    console.error('📋 Полная ошибка:', err);
     // Проверяем типичные ошибки соединения
     if (err.message.includes('ECONNREFUSED') || err.message.includes('ETIMEDOUT')) {
       console.error('⚠️ Возможно, проблема с сетью или Google API недоступен в данном регионе');
@@ -106,6 +119,27 @@ wss.on('connection', (clientWs, req) => {
     if (err.message.includes('403') || err.message.includes('401')) {
       console.error('⚠️ Проблема с API ключом или доступом');
     }
+  });
+
+  // Обработка unexpected-response для получения тела ответа 404 и других ошибок
+  geminiWs.on('unexpected-response', (request, response) => {
+    console.error('❌ Unexpected response от Google API:');
+    console.error('   Статус код:', response.statusCode);
+    console.error('   Статус сообщение:', response.statusMessage);
+    console.error('   Заголовки:', JSON.stringify(response.headers, null, 2));
+
+    let responseBody = '';
+    response.on('data', (chunk) => {
+      responseBody += chunk.toString();
+    });
+
+    response.on('end', () => {
+      console.error('📄 Тело ответа:', responseBody);
+    });
+
+    response.on('error', (err) => {
+      console.error('❌ Ошибка при чтении тела ответа:', err.message);
+    });
   });
   
   clientWs.on('error', (err) => console.error('❌ Ошибка на стороне Напарника:', err.message));
