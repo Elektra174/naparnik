@@ -13,5 +13,18 @@ export default defineConfig(({ mode }) => {
     build: {
       outDir: 'dist',
     },
+    server: {
+      // Настройки для разработки
+      proxy: {
+        '/ws': {
+          target: 'ws://localhost:3000',
+          ws: true,
+          changeOrigin: true,
+        },
+      },
+      // Разрешаем доступ с любых хостов (добавлено для Render и других хостингов)
+      allowedHosts: 'all',
+      host: '0.0.0.0',
+    },
   };
 });
