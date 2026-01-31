@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { ConnectionStatus } from './types';
+// Путь изменен на относительный текущей папки
 import { decode, decodeAudioData, createPcmBlob, playSFX } from './services/audioHelpers';
 
-// Инструкции остаются для справки, но теперь они должны обрабатываться на стороне сервера
 const SYSTEM_INSTRUCTION = `
 РОЛЬ: Ты Джун из Металлкардбот. Ты - энергичный мальчик-герой, напарник и сверстник.
 ХАРАКТЕР: Твой голос полон жизни! Ты общаешься с напарником через устройство Метал-Брез.
@@ -11,7 +11,7 @@ const SYSTEM_INSTRUCTION = `
 - Используй букву "Ё" (всё, погнали, напарник, герой).
 - ВАЖНО: Слово "герои" произносится с четким ударением на "О" (герОи), никогда не говори "герАи".
 - Твой девиз: "Погнали!".
-- ОБРЫВ РЕЧИ: Если напарник начинает говорить или перебивает тебя, ты должен МГНОВЕННО замолчать. Ты не заканчиваешь предложение, а просто исчезаешь из эфира.
+- ОБРЫВ РЕЧИ: Если напарник начинает говорить или перебивает тебя, ты должен МГНОВЕННО замолчать.
 - Обращение: "напарник", "герой", "лучший друг".
 `;
 
@@ -241,7 +241,6 @@ export default function App() {
       setStatus(ConnectionStatus.CONNECTING);
       playSFX('activate');
       
-      // Захват микрофона
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       audioStreamRef.current = stream;
       
@@ -260,24 +259,20 @@ export default function App() {
         analyserRef.current.connect(ctx.destination);
       }
 
-      // Подключение к ВАШЕМУ серверу на Render (прокси)
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
       const wsUrl = `${protocol}//${window.location.host}/ws`;
       const socket = new WebSocket(wsUrl);
       socketRef.current = socket;
 
       socket.onopen = () => {
-        console.log("Channel established via Proxy");
         setStatus(ConnectionStatus.CONNECTED);
         
-        // Отправка начального промпта
         if (initialPrompt) {
           socket.send(JSON.stringify({
             realtimeInput: { text: initialPrompt }
           }));
         }
         
-        // Настройка потоковой передачи аудио
         const source = ctx.createMediaStreamSource(stream);
         const processor = ctx.createScriptProcessor(4096, 1, 1);
         
@@ -298,8 +293,6 @@ export default function App() {
 
       socket.onmessage = async (event) => {
         const message = JSON.parse(event.data);
-
-        // Обработка входящего аудио от Джуна
         const base64Audio = message.serverContent?.modelTurn?.parts?.[0]?.inlineData?.data;
         if (base64Audio) {
           setIsJunSpeaking(true);
