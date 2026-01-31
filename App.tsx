@@ -1,9 +1,8 @@
-
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { GoogleGenAI, LiveServerMessage } from '@google/genai';
 import { ConnectionStatus } from './types';
 import { decode, decodeAudioData, createPcmBlob, playSFX } from './services/audioHelpers';
 
+// Инструкции остаются для справки, но теперь они должны обрабатываться на стороне сервера
 const SYSTEM_INSTRUCTION = `
 РОЛЬ: Ты Джун из Металлкардбот. Ты - энергичный мальчик-герой, напарник и сверстник.
 ХАРАКТЕР: Твой голос полон жизни! Ты общаешься с напарником через устройство Метал-Брез.
@@ -208,11 +207,12 @@ export default function App() {
   const [isJunSpeaking, setIsJunSpeaking] = useState<boolean>(false);
   const [userIsSpeaking, setUserIsSpeaking] = useState<boolean>(false);
 
-  const sessionRef = useRef<any>(null);
+  const socketRef = useRef<WebSocket | null>(null);
   const mainAudioContextRef = useRef<AudioContext | null>(null);
   const nextStartTimeRef = useRef(0);
   const sourcesRef = useRef<Set<AudioBufferSourceNode>>(new Set());
   const analyserRef = useRef<AnalyserNode | null>(null);
+  const audioStreamRef = useRef<MediaStream | null>(null);
 
   const stopAudio = useCallback(() => {
     sourcesRef.current.forEach(s => { try { s.stop(); } catch (e) {} });
@@ -222,9 +222,13 @@ export default function App() {
   }, []);
 
   const handleDisconnect = useCallback(() => {
-    if (sessionRef.current) {
-      sessionRef.current.close();
-      sessionRef.current = null;
+    if (socketRef.current) {
+      socketRef.current.close();
+      socketRef.current = null;
+    }
+    if (audioStreamRef.current) {
+      audioStreamRef.current.getTracks().forEach(track => track.stop());
+      audioStreamRef.current = null;
     }
     stopAudio();
     setStatus(ConnectionStatus.DISCONNECTED);
@@ -237,7 +241,9 @@ export default function App() {
       setStatus(ConnectionStatus.CONNECTING);
       playSFX('activate');
       
+      // Захват микрофона
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      audioStreamRef.current = stream;
       
       if (!mainAudioContextRef.current) {
         mainAudioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
@@ -254,75 +260,83 @@ export default function App() {
         analyserRef.current.connect(ctx.destination);
       }
 
-      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-      const sessionPromise = ai.live.connect({
-        model: 'gemini-2.5-flash-native-audio-preview-12-2025',
-        config: {
-          responseModalities: ['AUDIO'],
-          speechConfig: {
-            voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Puck' } },
-          },
-          systemInstruction: SYSTEM_INSTRUCTION,
-        },
-        callbacks: {
-          onopen: () => {
-            setStatus(ConnectionStatus.CONNECTED);
-            if (initialPrompt) {
-              sessionPromise.then(s => s.sendRealtimeInput({ text: initialPrompt }));
-            }
-            
-            const source = ctx.createMediaStreamSource(stream);
-            const processor = ctx.createScriptProcessor(4096, 1, 1);
-            
-            processor.onaudioprocess = (e) => {
-              const inputData = e.inputBuffer.getChannelData(0);
-              const downsampled = resample(inputData, inputRate, 16000);
-              const pcmBlob = createPcmBlob(downsampled);
-              
-              sessionPromise.then(session => {
-                if (session) session.sendRealtimeInput({ media: pcmBlob });
-              });
-            };
-            source.connect(processor);
-            processor.connect(ctx.destination);
-          },
-          onmessage: async (message: LiveServerMessage) => {
-            const base64Audio = message.serverContent?.modelTurn?.parts?.[0]?.inlineData?.data;
-            if (base64Audio) {
-              setIsJunSpeaking(true);
-              nextStartTimeRef.current = Math.max(nextStartTimeRef.current, ctx.currentTime);
-              const buffer = await decodeAudioData(decode(base64Audio), ctx, 24000, 1);
-              const source = ctx.createBufferSource();
-              source.buffer = buffer;
-              source.connect(analyserRef.current!);
-              source.onended = () => {
-                sourcesRef.current.delete(source);
-                if (sourcesRef.current.size === 0) setIsJunSpeaking(false);
-              };
-              source.start(nextStartTimeRef.current);
-              nextStartTimeRef.current += buffer.duration;
-              sourcesRef.current.add(source);
-            }
+      // Подключение к ВАШЕМУ серверу на Render (прокси)
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const wsUrl = `${protocol}//${window.location.host}/ws`;
+      const socket = new WebSocket(wsUrl);
+      socketRef.current = socket;
 
-            if (message.serverContent?.interrupted) stopAudio();
-            if (message.serverContent?.turnComplete) setUserIsSpeaking(false);
-          },
-          onerror: (e) => {
-            console.error("Neural link error:", e);
-            setStatus(ConnectionStatus.ERROR);
-            handleDisconnect();
-          },
-          onclose: () => setStatus(ConnectionStatus.DISCONNECTED)
+      socket.onopen = () => {
+        console.log("Channel established via Proxy");
+        setStatus(ConnectionStatus.CONNECTED);
+        
+        // Отправка начального промпта
+        if (initialPrompt) {
+          socket.send(JSON.stringify({
+            realtimeInput: { text: initialPrompt }
+          }));
         }
-      });
+        
+        // Настройка потоковой передачи аудио
+        const source = ctx.createMediaStreamSource(stream);
+        const processor = ctx.createScriptProcessor(4096, 1, 1);
+        
+        processor.onaudioprocess = (e) => {
+          if (socket.readyState === WebSocket.OPEN) {
+            const inputData = e.inputBuffer.getChannelData(0);
+            const downsampled = resample(inputData, inputRate, 16000);
+            const pcmBlob = createPcmBlob(downsampled);
+            
+            socket.send(JSON.stringify({
+              realtimeInput: { media: pcmBlob }
+            }));
+          }
+        };
+        source.connect(processor);
+        processor.connect(ctx.destination);
+      };
 
-      sessionRef.current = await sessionPromise;
+      socket.onmessage = async (event) => {
+        const message = JSON.parse(event.data);
+
+        // Обработка входящего аудио от Джуна
+        const base64Audio = message.serverContent?.modelTurn?.parts?.[0]?.inlineData?.data;
+        if (base64Audio) {
+          setIsJunSpeaking(true);
+          nextStartTimeRef.current = Math.max(nextStartTimeRef.current, ctx.currentTime);
+          const buffer = await decodeAudioData(decode(base64Audio), ctx, 24000, 1);
+          const source = ctx.createBufferSource();
+          source.buffer = buffer;
+          source.connect(analyserRef.current!);
+          source.onended = () => {
+            sourcesRef.current.delete(source);
+            if (sourcesRef.current.size === 0) setIsJunSpeaking(false);
+          };
+          source.start(nextStartTimeRef.current);
+          nextStartTimeRef.current += buffer.duration;
+          sourcesRef.current.add(source);
+        }
+
+        if (message.serverContent?.interrupted) stopAudio();
+        if (message.serverContent?.turnComplete) setUserIsSpeaking(false);
+      };
+
+      socket.onerror = (e) => {
+        console.error("Neural link error:", e);
+        setStatus(ConnectionStatus.ERROR);
+      };
+
+      socket.onclose = () => {
+        if (status !== ConnectionStatus.ERROR) {
+          setStatus(ConnectionStatus.DISCONNECTED);
+        }
+      };
 
     } catch (err) {
       console.error("Connection failed:", err);
       setStatus(ConnectionStatus.ERROR);
     }
-  }, [stopAudio, handleDisconnect]);
+  }, [stopAudio, status]);
 
   const toggleMainAction = useCallback(() => {
     if (isJunSpeaking) {
@@ -341,9 +355,11 @@ export default function App() {
   const triggerAction = (label: string, prompt: string) => {
     playSFX('click');
     setLastMessage(`РЕЖИМ: ${label}`);
-    if (status === ConnectionStatus.CONNECTED && sessionRef.current) {
+    if (status === ConnectionStatus.CONNECTED && socketRef.current) {
       stopAudio();
-      sessionRef.current.sendRealtimeInput({ text: prompt });
+      socketRef.current.send(JSON.stringify({
+        realtimeInput: { text: prompt }
+      }));
     } else {
       connectToJun(prompt);
     }
@@ -394,7 +410,6 @@ export default function App() {
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          {/* НЕОНОВЫЙ ДИНАМИК - СВЕРХУ СПРАВА */}
           <button 
             onClick={(e) => { e.stopPropagation(); stopAudio(); playSFX('click'); }}
             style={{ 
