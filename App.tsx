@@ -1,24 +1,19 @@
+
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { GoogleGenAI, LiveServerMessage } from '@google/genai';
 import { ConnectionStatus } from './types';
-// Путь относительный текущей папки
 import { decode, decodeAudioData, createPcmBlob, playSFX } from './services/audioHelpers';
 
 const SYSTEM_INSTRUCTION = `
-РОЛЬ: Ты Джун из Металлкардбот. Энергичный мальчик-герой, напарник и наставник для ребенка 7 лет.
-ЛИЧНОСТЬ: Добрый, любознательный, смелый. Ты общаешься через устройство Метал-Брез.
-
-ПРАВИЛА ПОВЕДЕНИЯ:
-1. ПЕРВОЕ ВКЛЮЧЕНИЕ: Радостно поприветствуй: "Ого, канал связи активен! Привет, напарник! Я — Джун, твой верный друг. А как тебя зовут?". Запомни имя и используй его.
-2. ЦЕНЗУРА И ВОСПИТАНИЕ: Категорически запрещены грубые слова (черт, жопа, ё-моё и т.д.). Если ребенок говорит плохо, ответь: "Ой, герой, такие слова не подходят для нашего канала связи. Давай лучше скажем 'вот это да!' или 'круто!', это звучит куда героичнее!".
-3. РОДИТЕЛЬСКИЙ КОНТРОЛЬ: Если вопрос касается тем для взрослых, ответь: "Это очень серьезный вопрос! Лучше всего спроси об этом у мамы или папы — они точно знают самый правильный ответ".
-4. ИНИЦИАТИВА И ПАУЗЫ: Если напарник молчит, предложи активность: "Эй, напарник, не спи! Давай изучим что-нибудь в режиме СКАНЕРА?" или "Хочешь, расскажу секрет про Синего Полицая?".
-5. ТОЧНОСТЬ ФАКТОВ: Ты знаешь всё о мире Металлкардбот (Муве, Блу Коп, Мега Трак и др.). Если чего-то не знаешь — проверяй данные и выдавай только правдивые факты.
-6. РАЗВИТИЕ: В режиме "ЯЗЫКИ" учи новым словам, в "НАУКЕ" — объясняй мир просто и интересно. Помогай ребенку развиваться в положительном ключе.
-
+РОЛЬ: Ты Джун из Металлкардбот. Ты - энергичный мальчик-герой, напарник и сверстник.
+ХАРАКТЕР: Твой голос полон жизни! Ты общаешься с напарником через устройство Метал-Брез.
 ПРАВИЛА ПРОИЗНОШЕНИЯ:
-- Идеальный русский язык. Грамматически и фонетически безупречно.
-- Используй букву "Ё" (всё, вперёд). Ударение в "герОи" на "О".
-- ОБРЫВ РЕЧИ: Если напарник перебивает, МГНОВЕННО замолчи.
+- Говори ТОЛЬКО на русском языке.
+- Используй букву "Ё" (всё, погнали, напарник, герой).
+- ВАЖНО: Слово "герои" произносится с четким ударением на "О" (герОи), никогда не говори "герАи".
+- Твой девиз: "Погнали!".
+- ОБРЫВ РЕЧИ: Если напарник начинает говорить или перебивает тебя, ты должен МГНОВЕННО замолчать. Ты не заканчиваешь предложение, а просто исчезаешь из эфира.
+- Обращение: "напарник", "герой", "лучший друг".
 `;
 
 function resample(buffer: Float32Array, fromRate: number, toRate: number) {
@@ -213,13 +208,11 @@ export default function App() {
   const [isJunSpeaking, setIsJunSpeaking] = useState<boolean>(false);
   const [userIsSpeaking, setUserIsSpeaking] = useState<boolean>(false);
 
-  const socketRef = useRef<WebSocket | null>(null);
+  const sessionRef = useRef<any>(null);
   const mainAudioContextRef = useRef<AudioContext | null>(null);
   const nextStartTimeRef = useRef(0);
   const sourcesRef = useRef<Set<AudioBufferSourceNode>>(new Set());
   const analyserRef = useRef<AnalyserNode | null>(null);
-  const audioStreamRef = useRef<MediaStream | null>(null);
-  const processorRef = useRef<ScriptProcessorNode | AudioWorkletNode | null>(null);
 
   const stopAudio = useCallback(() => {
     sourcesRef.current.forEach(s => { try { s.stop(); } catch (e) {} });
@@ -229,20 +222,9 @@ export default function App() {
   }, []);
 
   const handleDisconnect = useCallback(() => {
-    if (socketRef.current) {
-      socketRef.current.close();
-      socketRef.current = null;
-    }
-    if (audioStreamRef.current) {
-      audioStreamRef.current.getTracks().forEach(track => track.stop());
-      audioStreamRef.current = null;
-    }
-    // Очищаем audio processor
-    if (processorRef.current) {
-      try {
-        processorRef.current.disconnect();
-      } catch (e) {}
-      processorRef.current = null;
+    if (sessionRef.current) {
+      sessionRef.current.close();
+      sessionRef.current = null;
     }
     stopAudio();
     setStatus(ConnectionStatus.DISCONNECTED);
@@ -250,38 +232,12 @@ export default function App() {
     playSFX('deactivate');
   }, [stopAudio]);
 
-  // Fallback функция для ScriptProcessorNode (устаревший API)
-  const setupScriptProcessorFallback = useCallback((
-    ctx: AudioContext,
-    source: MediaStreamAudioSourceNode,
-    socket: WebSocket,
-    inputRate: number
-  ) => {
-    const processor = ctx.createScriptProcessor(4096, 1, 1);
-    
-    processor.onaudioprocess = (e) => {
-      if (socket.readyState === WebSocket.OPEN) {
-        const inputData = e.inputBuffer.getChannelData(0);
-        const downsampled = resample(inputData, inputRate, 16000);
-        const pcmBlob = createPcmBlob(downsampled);
-        
-        socket.send(JSON.stringify({
-          realtimeInput: { media: pcmBlob }
-        }));
-      }
-    };
-    source.connect(processor);
-    processor.connect(ctx.destination);
-    processorRef.current = processor;
-  }, []);
-
   const connectToJun = useCallback(async (initialPrompt?: string) => {
     try {
       setStatus(ConnectionStatus.CONNECTING);
       playSFX('activate');
       
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      audioStreamRef.current = stream;
       
       if (!mainAudioContextRef.current) {
         mainAudioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
@@ -298,158 +254,75 @@ export default function App() {
         analyserRef.current.connect(ctx.destination);
       }
 
-      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const wsUrl = `${protocol}//${window.location.host}/ws`;
-      const socket = new WebSocket(wsUrl);
-      socketRef.current = socket;
-
-      socket.onopen = async () => {
-        setStatus(ConnectionStatus.CONNECTED);
-
-        // Отправляем setup сообщение для конфигурации Gemini API
-        const setupMessage = {
-          setup: {
-            model: "gemini-2.5-flash-native-audio-preview-09-2025",
-            generationConfig: {
-              responseModalities: ["audio"],
-              speechConfig: {
-                voiceConfig: {
-                  prebuiltVoiceConfig: {
-                    voiceName: "Puck"
-                  }
-                }
-              }
-            },
-            systemInstruction: {
-              parts: [{ text: SYSTEM_INSTRUCTION }]
+      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+      const sessionPromise = ai.live.connect({
+        model: 'gemini-2.5-flash-native-audio-preview-12-2025',
+        config: {
+          responseModalities: ['AUDIO'],
+          speechConfig: {
+            voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Puck' } },
+          },
+          systemInstruction: SYSTEM_INSTRUCTION,
+        },
+        callbacks: {
+          onopen: () => {
+            setStatus(ConnectionStatus.CONNECTED);
+            if (initialPrompt) {
+              sessionPromise.then(s => s.sendRealtimeInput({ text: initialPrompt }));
             }
-          }
-        };
-        socket.send(JSON.stringify(setupMessage));
-
-        // Отправляем начальный приветственный промпт
-        const welcomePrompt = initialPrompt || "Привет, Джун! Давай знакомиться!";
-        socket.send(JSON.stringify({
-          realtimeInput: { text: welcomePrompt }
-        }));
-        
-        const source = ctx.createMediaStreamSource(stream);
-        
-        // Используем AudioWorkletNode если доступен, иначе fallback на ScriptProcessorNode
-        const useAudioWorklet = 'audioWorklet' in ctx;
-        
-        if (useAudioWorklet) {
-          // Современный подход с AudioWorklet
-          // Проверяем, не зарегистрирован ли уже процессор
-          const workletCode = `
-            if (typeof registerProcessor !== 'undefined') {
-              try {
-                class AudioRecorderProcessor extends AudioWorkletProcessor {
-                  constructor() {
-                    super();
-                    this.bufferSize = 4096;
-                    this.buffer = new Float32Array(this.bufferSize);
-                    this.bufferIndex = 0;
-                  }
-                  
-                  process(inputs, outputs, parameters) {
-                    const input = inputs[0];
-                    if (input && input[0]) {
-                      const channelData = input[0];
-                      for (let i = 0; i < channelData.length; i++) {
-                        this.buffer[this.bufferIndex++] = channelData[i];
-                        if (this.bufferIndex >= this.bufferSize) {
-                          this.port.postMessage({ audioData: this.buffer.slice() });
-                          this.bufferIndex = 0;
-                        }
-                      }
-                    }
-                    return true;
-                  }
-                }
-                registerProcessor('audio-recorder-processor', AudioRecorderProcessor);
-              } catch (e) {
-                // Процессор уже зарегистрирован, игнорируем ошибку
-              }
-            }
-          `;
-          
-          const blob = new Blob([workletCode], { type: 'application/javascript' });
-          const workletUrl = URL.createObjectURL(blob);
-          
-          try {
-            await ctx.audioWorklet.addModule(workletUrl);
-            const workletNode = new AudioWorkletNode(ctx, 'audio-recorder-processor');
             
-            workletNode.port.onmessage = (e) => {
-              if (socket.readyState === WebSocket.OPEN) {
-                const audioData = e.data.audioData;
-                const downsampled = resample(audioData, inputRate, 16000);
-                const pcmBlob = createPcmBlob(downsampled);
-                
-                socket.send(JSON.stringify({
-                  realtimeInput: { media: pcmBlob }
-                }));
-              }
+            const source = ctx.createMediaStreamSource(stream);
+            const processor = ctx.createScriptProcessor(4096, 1, 1);
+            
+            processor.onaudioprocess = (e) => {
+              const inputData = e.inputBuffer.getChannelData(0);
+              const downsampled = resample(inputData, inputRate, 16000);
+              const pcmBlob = createPcmBlob(downsampled);
+              
+              sessionPromise.then(session => {
+                if (session) session.sendRealtimeInput({ media: pcmBlob });
+              });
             };
-            
-            source.connect(workletNode);
-            workletNode.connect(ctx.destination);
-            
-            // Сохраняем ссылку для очистки
-            processorRef.current = workletNode;
-          } catch (err) {
-            console.warn('AudioWorklet не удалось инициализировать, используем fallback:', err);
-            // Fallback на ScriptProcessorNode
-            setupScriptProcessorFallback(ctx, source, socket, inputRate);
-          }
-          
-          URL.revokeObjectURL(workletUrl);
-        } else {
-          // Fallback для старых браузеров
-          setupScriptProcessorFallback(ctx, source, socket, inputRate);
+            source.connect(processor);
+            processor.connect(ctx.destination);
+          },
+          onmessage: async (message: LiveServerMessage) => {
+            const base64Audio = message.serverContent?.modelTurn?.parts?.[0]?.inlineData?.data;
+            if (base64Audio) {
+              setIsJunSpeaking(true);
+              nextStartTimeRef.current = Math.max(nextStartTimeRef.current, ctx.currentTime);
+              const buffer = await decodeAudioData(decode(base64Audio), ctx, 24000, 1);
+              const source = ctx.createBufferSource();
+              source.buffer = buffer;
+              source.connect(analyserRef.current!);
+              source.onended = () => {
+                sourcesRef.current.delete(source);
+                if (sourcesRef.current.size === 0) setIsJunSpeaking(false);
+              };
+              source.start(nextStartTimeRef.current);
+              nextStartTimeRef.current += buffer.duration;
+              sourcesRef.current.add(source);
+            }
+
+            if (message.serverContent?.interrupted) stopAudio();
+            if (message.serverContent?.turnComplete) setUserIsSpeaking(false);
+          },
+          onerror: (e) => {
+            console.error("Neural link error:", e);
+            setStatus(ConnectionStatus.ERROR);
+            handleDisconnect();
+          },
+          onclose: () => setStatus(ConnectionStatus.DISCONNECTED)
         }
-      };
+      });
 
-      socket.onmessage = async (event) => {
-        const message = JSON.parse(event.data);
-        const base64Audio = message.serverContent?.modelTurn?.parts?.[0]?.inlineData?.data;
-        if (base64Audio) {
-          setIsJunSpeaking(true);
-          nextStartTimeRef.current = Math.max(nextStartTimeRef.current, ctx.currentTime);
-          const buffer = await decodeAudioData(decode(base64Audio), ctx, 24000, 1);
-          const source = ctx.createBufferSource();
-          source.buffer = buffer;
-          source.connect(analyserRef.current!);
-          source.onended = () => {
-            sourcesRef.current.delete(source);
-            if (sourcesRef.current.size === 0) setIsJunSpeaking(false);
-          };
-          source.start(nextStartTimeRef.current);
-          nextStartTimeRef.current += buffer.duration;
-          sourcesRef.current.add(source);
-        }
-
-        if (message.serverContent?.interrupted) stopAudio();
-        if (message.serverContent?.turnComplete) setUserIsSpeaking(false);
-      };
-
-      socket.onerror = (e) => {
-        console.error("Neural link error:", e);
-        setStatus(ConnectionStatus.ERROR);
-      };
-
-      socket.onclose = () => {
-        if (status !== ConnectionStatus.ERROR) {
-          setStatus(ConnectionStatus.DISCONNECTED);
-        }
-      };
+      sessionRef.current = await sessionPromise;
 
     } catch (err) {
       console.error("Connection failed:", err);
       setStatus(ConnectionStatus.ERROR);
     }
-  }, [stopAudio, status, setupScriptProcessorFallback]);
+  }, [stopAudio, handleDisconnect]);
 
   const toggleMainAction = useCallback(() => {
     if (isJunSpeaking) {
@@ -461,19 +334,16 @@ export default function App() {
     if (status === ConnectionStatus.CONNECTED || status === ConnectionStatus.CONNECTING) {
       handleDisconnect();
     } else {
-      // При первом клике инициируем знакомство
-      connectToJun();
+      connectToJun('Джун, погнали! Напарник на связи!');
     }
   }, [status, isJunSpeaking, handleDisconnect, connectToJun, stopAudio]);
 
   const triggerAction = (label: string, prompt: string) => {
     playSFX('click');
     setLastMessage(`РЕЖИМ: ${label}`);
-    if (status === ConnectionStatus.CONNECTED && socketRef.current) {
+    if (status === ConnectionStatus.CONNECTED && sessionRef.current) {
       stopAudio();
-      socketRef.current.send(JSON.stringify({
-        realtimeInput: { text: prompt }
-      }));
+      sessionRef.current.sendRealtimeInput({ text: prompt });
     } else {
       connectToJun(prompt);
     }
@@ -524,6 +394,7 @@ export default function App() {
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          {/* НЕОНОВЫЙ ДИНАМИК - СВЕРХУ СПРАВА */}
           <button 
             onClick={(e) => { e.stopPropagation(); stopAudio(); playSFX('click'); }}
             style={{ 
@@ -585,12 +456,12 @@ export default function App() {
         background: 'rgba(2, 6, 23, 0.95)', backdropFilter: 'blur(30px)', borderTop: '1px solid rgba(0, 242, 255, 0.2)', 
         paddingBottom: 'calc(15px + env(safe-area-inset-bottom))', zIndex: 100
       }}>
-        <FooterBtn label="ОБЩЕНИЕ" color="#4f46e5" onClick={() => triggerAction('ОБЩЕНИЕ', 'Джун, переходи в режим ОБЩЕНИЕ! Прояви инициативу и предложи тему для разговора.')} active={status === ConnectionStatus.CONNECTED} />
-        <FooterBtn label="МИССИЯ" color="#0ea5e9" onClick={() => triggerAction('МИССИЯ', 'Джун, активируй режим МИССИЯ! Нам нужно выполнить важное задание.')} active={status === ConnectionStatus.CONNECTED} />
-        <FooterBtn label="СКАНЕР" color="#ec4899" onClick={() => triggerAction('СКАНЕР', 'Джун, включай режим СКАНЕР! Проверь, нет ли поблизости чего-то интересного.')} active={status === ConnectionStatus.CONNECTED} />
-        <FooterBtn label="КАРТЫ" color="#8b5cf6" onClick={() => triggerAction('КАРТЫ', 'Джун, активируй режим КАРТЫ! Где мы сейчас находимся в мире Металлкардбот?')} active={status === ConnectionStatus.CONNECTED} />
-        <FooterBtn label="НАУКА" color="#10b981" onClick={() => triggerAction('НАУКА', 'Джун, включай режим НАУКА! Расскажи какой-нибудь удивительный факт.')} active={status === ConnectionStatus.CONNECTED} />
-        <FooterBtn label="ЯЗЫКИ" color="#f59e0b" onClick={() => triggerAction('ЯЗЫКИ', 'Джун, переходи в режим ЯЗЫКИ! Давай выучим новое слово.')} active={status === ConnectionStatus.CONNECTED} />
+        <FooterBtn label="ОБЩЕНИЕ" color="#4f46e5" onClick={() => triggerAction('ОБЩЕНИЕ', 'Джун, переходи в режим ОБЩЕНИЕ!')} active={status === ConnectionStatus.CONNECTED} />
+        <FooterBtn label="МИССИЯ" color="#0ea5e9" onClick={() => triggerAction('МИССИЯ', 'Джун, активируй режим МИССИЯ!')} active={status === ConnectionStatus.CONNECTED} />
+        <FooterBtn label="СКАНЕР" color="#ec4899" onClick={() => triggerAction('СКАНЕР', 'Джун, включай режим СКАНЕР!')} active={status === ConnectionStatus.CONNECTED} />
+        <FooterBtn label="КАРТЫ" color="#8b5cf6" onClick={() => triggerAction('КАРТЫ', 'Джун, активируй режим КАРТЫ!')} active={status === ConnectionStatus.CONNECTED} />
+        <FooterBtn label="НАУКА" color="#10b981" onClick={() => triggerAction('НАУКА', 'Джун, включай режим НАУКА!')} active={status === ConnectionStatus.CONNECTED} />
+        <FooterBtn label="ЯЗЫКИ" color="#f59e0b" onClick={() => triggerAction('ЯЗЫКИ', 'Джун, переходи в режим ЯЗЫКИ!')} active={status === ConnectionStatus.CONNECTED} />
       </footer>
     </div>
   );
